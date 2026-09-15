@@ -1,3 +1,5 @@
+import '../core/image_url.dart';
+
 class AuthUser {
   const AuthUser({
     required this.id,
@@ -15,7 +17,7 @@ class AuthUser {
       fullname: '${json['fullname'] ?? json['username'] ?? ''}',
       email: '${json['email'] ?? ''}',
       role: '${json['role'] ?? 'USER'}',
-      avatar: json['avatar']?.toString(),
+      avatar: normalizeRasterImageUrl(json['avatar']),
     );
   }
 

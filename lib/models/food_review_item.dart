@@ -1,3 +1,5 @@
+import '../core/image_url.dart';
+
 class FoodReviewItem {
   const FoodReviewItem({
     required this.id,
@@ -22,10 +24,7 @@ class FoodReviewItem {
   final String? createdAt;
 
   factory FoodReviewItem.fromJson(Map<String, dynamic> json) {
-    String? avatar = json['avatar']?.toString().trim();
-    if (avatar != null && avatar.startsWith('/')) {
-      avatar = 'https://food-backend-xrb9.onrender.com$avatar';
-    }
+    final avatar = normalizeRasterImageUrl(json['avatar']);
     return FoodReviewItem(
       id: int.tryParse('${json['id']}') ?? 0,
       foodId: int.tryParse('${json['foodId'] ?? json['food_id']}') ?? 0,
