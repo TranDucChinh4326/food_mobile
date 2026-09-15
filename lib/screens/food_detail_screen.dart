@@ -7,6 +7,7 @@ import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
 import '../services/food_service.dart';
+import '../widgets/app_image.dart';
 
 class FoodDetailScreen extends StatefulWidget {
   const FoodDetailScreen({
@@ -483,8 +484,8 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
             children: [
               AspectRatio(
                 aspectRatio: 1 / 0.78,
-                child: Image.network(
-                  food.imageUrl,
+                child: AppImage(
+                  source: food.imageUrl,
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => Container(
                     color: const Color(0xFFFFF3EB),
@@ -1252,8 +1253,8 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
               ),
               child: AspectRatio(
                 aspectRatio: 1 / 0.72,
-                child: Image.network(
-                  rec.imageUrl,
+                child: AppImage(
+                  source: rec.imageUrl,
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => Container(
                     color: const Color(0xFFFFF3EB),

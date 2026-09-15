@@ -7,6 +7,7 @@ import '../models/combo_item.dart';
 import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
+import '../widgets/app_image.dart';
 import '../widgets/food_card.dart';
 import '../widgets/skeleton_loader.dart';
 import 'food_detail_screen.dart';
@@ -1132,8 +1133,8 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                           child: AspectRatio(
                             aspectRatio: 1.35,
-                            child: Image.network(
-                              food.imageUrl,
+                            child: AppImage(
+                              source: food.imageUrl,
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => const ColoredBox(
                                 color: AppColors.soft,

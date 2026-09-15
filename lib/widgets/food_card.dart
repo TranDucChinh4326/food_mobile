@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
 import '../models/food_item.dart';
+import 'app_image.dart';
 
 class FoodCard extends StatelessWidget {
   const FoodCard({
@@ -60,8 +61,8 @@ class FoodCard extends StatelessWidget {
                 children: [
                   AspectRatio(
                     aspectRatio: 1.32,
-                    child: Image.network(
-                      food.imageUrl,
+                    child: AppImage(
+                      source: food.imageUrl,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => const ColoredBox(
                         color: AppColors.soft,
