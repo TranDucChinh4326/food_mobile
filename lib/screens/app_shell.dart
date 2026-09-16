@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
@@ -9,6 +11,7 @@ import '../models/food_item.dart';
 import '../models/food_review_item.dart';
 import '../models/home_content.dart';
 import '../services/food_service.dart';
+import '../services/cart_storage_service.dart';
 import 'account_screen.dart';
 import 'cart_screen.dart';
 import 'home_screen.dart';
@@ -36,6 +39,7 @@ class _AppShellState extends State<AppShell> {
 
   // ── Giỏ hàng ────────────────────────────────
   final List<CartItem> _cartItems = [];
+  final CartStorageService _cartStorage = CartStorageService();
 
   int get _cartCount => _cartItems.fold(0, (s, i) => s + i.quantity);
 
@@ -59,7 +63,22 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _hydrateFromCache();
+    _restoreCart();
     _loadAllData();
+  }
+
+  Future<void> _restoreCart() async {
+    final items = await _cartStorage.load(widget.session.user.id);
+    if (!mounted || items.isEmpty) return;
+    setState(() {
+      _cartItems
+        ..clear()
+        ..addAll(items);
+    });
+  }
+
+  void _persistCart() {
+    unawaited(_cartStorage.save(widget.session.user.id, _cartItems));
   }
 
   void _hydrateFromCache() {
@@ -157,6 +176,7 @@ class _AppShellState extends State<AppShell> {
           );
         }
       });
+      _persistCart();
       _showAddedToCartMessage(combo.name);
       return;
     }
@@ -185,6 +205,8 @@ class _AppShellState extends State<AppShell> {
         _cartItems.add(CartItem(food: food, quantity: 1, salePrice: salePrice));
       }
     });
+
+    _persistCart();
 
     _showAddedToCartMessage(foodName);
   }
@@ -227,14 +249,17 @@ class _AppShellState extends State<AppShell> {
         }
       }
     });
+    _persistCart();
   }
 
   void _removeCartItem(int foodId) {
     setState(() => _cartItems.removeWhere((i) => i.food.id == foodId));
+    _persistCart();
   }
 
   void _clearCart() {
     setState(() => _cartItems.clear());
+    _persistCart();
   }
 
   // ──────────────────────────────────────────────
