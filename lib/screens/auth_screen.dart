@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../core/api_config.dart';
 import '../core/app_theme.dart';
 import '../models/auth_session.dart';
 import '../services/api_exception.dart';
@@ -116,7 +118,10 @@ class _AuthScreenState extends State<AuthScreen> {
       _error = null;
     });
     try {
-      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+      final googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+        serverClientId: ApiConfig.googleServerClientId,
+      );
       final account = await googleSignIn.signIn();
       if (account == null) {
         setState(() => _submitting = false);
@@ -144,6 +149,18 @@ class _AuthScreenState extends State<AuthScreen> {
         if (mounted) {
           widget.onAuthenticated(result['session'] as AuthSession);
         }
+      }
+    } on PlatformException catch (error) {
+      if (mounted) {
+        final isConfigurationError =
+            error.code == 'sign_in_failed' &&
+            (error.message?.contains('ApiException: 10') ?? false);
+        setState(() {
+          _error = isConfigurationError
+              ? 'Đăng nhập Google chưa được cấp quyền cho bản Android này. '
+                    'Vui lòng liên hệ quản trị viên.'
+              : error.message ?? 'Không thể đăng nhập bằng Google.';
+        });
       }
     } catch (e) {
       if (mounted) {
