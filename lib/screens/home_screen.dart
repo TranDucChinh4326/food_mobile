@@ -425,53 +425,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     // 2. Các món đang Flash Sale
-    for (final sale in widget.flashSales) {
-      for (final item in sale.items) {
-        final food = widget.foods.where((f) => f.id == item.foodId).firstOrNull;
-        if (food != null &&
-            food.imageUrl.isNotEmpty &&
-            !promoSlides.any((s) => s['food']?.id == food.id)) {
-          promoSlides.add({
-            'title': food.name,
-            'subtitle': 'Flash Sale: ${item.salePrice}đ (Gốc ${food.price}đ)',
-            'image': food.imageUrl,
-            'badge': '⚡ FLASH SALE',
-            'badgeColor': const Color(0xFFFF1744),
-            'food': food,
-          });
-        }
-      }
-    }
-
-    // 3. Các Combo món ăn hấp dẫn
-    for (final combo in widget.combos) {
-      if (combo.image.isNotEmpty) {
-        promoSlides.add({
-          'title': combo.name,
-          'subtitle': combo.description ?? 'Tiết kiệm hơn khi dùng combo',
-          'image': combo.image,
-          'badge': '🍱 COMBO TIẾT KIỆM',
-          'badgeColor': const Color(0xFFFF9100),
-          'food': null,
-        });
-      }
-    }
-
-    // 4. Các món Bán chạy nhất (Best Sellers)
-    for (final food in _topBestSellers.take(3)) {
-      if (food.imageUrl.isNotEmpty &&
-          !promoSlides.any((s) => s['food']?.id == food.id)) {
-        promoSlides.add({
-          'title': food.name,
-          'subtitle': 'Món ngon được gọi nhiều nhất',
-          'image': food.imageUrl,
-          'badge': '🔥 BÁN CHẠY',
-          'badgeColor': const Color(0xFFE53935),
-          'food': food,
-        });
-      }
-    }
-
     if (promoSlides.isEmpty) return;
 
     int currentAdIndex = 0;
