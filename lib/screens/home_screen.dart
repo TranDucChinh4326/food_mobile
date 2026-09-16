@@ -395,7 +395,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _checkAndShowAdPopup() {
     if (_hasShownAdPopup) return;
-    if (widget.advertisements.isEmpty) return;
     _hasShownAdPopup = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -405,18 +404,101 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _showAdvertisementPopup() async {
-    if (widget.advertisements.isEmpty || !mounted) return;
+    if (!mounted) return;
 
-    final ads = widget.advertisements;
+    // Tổng hợp tất cả các poster quảng cáo, combo và món nổi bật để tạo danh sách lướt đa dạng
+    final List<Map<String, dynamic>> promoSlides = [];
+
+    // 1. Banner quảng cáo chính từ CSDL (như Nước ép xoài Mua 1 Tặng 1)
+    for (final ad in widget.advertisements) {
+      final foodId = ad.linkedFoodId;
+      final linkedFood = foodId != null
+          ? widget.foods.where((f) => f.id == foodId).firstOrNull
+          : null;
+      promoSlides.add({
+        'title': ad.title,
+        'image': ad.image,
+        'badge': '🎁 ƯU ĐÃI ĐẶC BIỆT',
+        'badgeColor': const Color(0xFFFF6D00),
+        'food': linkedFood,
+      });
+    }
+
+    // 2. Các món đang Flash Sale
+    for (final sale in widget.flashSales) {
+      for (final item in sale.items) {
+        final food = widget.foods.where((f) => f.id == item.foodId).firstOrNull;
+        if (food != null &&
+            food.imageUrl.isNotEmpty &&
+            !promoSlides.any((s) => s['food']?.id == food.id)) {
+          promoSlides.add({
+            'title': food.name,
+            'subtitle': 'Flash Sale: ${item.salePrice}đ (Gốc ${food.price}đ)',
+            'image': food.imageUrl,
+            'badge': '⚡ FLASH SALE',
+            'badgeColor': const Color(0xFFFF1744),
+            'food': food,
+          });
+        }
+      }
+    }
+
+    // 3. Các Combo món ăn hấp dẫn
+    for (final combo in widget.combos) {
+      if (combo.image.isNotEmpty) {
+        promoSlides.add({
+          'title': combo.name,
+          'subtitle': combo.description ?? 'Tiết kiệm hơn khi dùng combo',
+          'image': combo.image,
+          'badge': '🍱 COMBO TIẾT KIỆM',
+          'badgeColor': const Color(0xFFFF9100),
+          'food': null,
+        });
+      }
+    }
+
+    // 4. Các món Bán chạy nhất (Best Sellers)
+    for (final food in _topBestSellers.take(3)) {
+      if (food.imageUrl.isNotEmpty &&
+          !promoSlides.any((s) => s['food']?.id == food.id)) {
+        promoSlides.add({
+          'title': food.name,
+          'subtitle': 'Món ngon được gọi nhiều nhất',
+          'image': food.imageUrl,
+          'badge': '🔥 BÁN CHẠY',
+          'badgeColor': const Color(0xFFE53935),
+          'food': food,
+        });
+      }
+    }
+
+    if (promoSlides.isEmpty) return;
+
     int currentAdIndex = 0;
-    final pageController = PageController();
+    // Tỉ lệ 0.82 để lộ mép của 2 poster trước và sau giống bìa phim Netflix/Galaxy Play
+    final pageController = PageController(
+      viewportFraction: promoSlides.length > 1 ? 0.82 : 0.92,
+    );
+    Timer? autoSlideTimer;
+
+    if (promoSlides.length > 1) {
+      autoSlideTimer = Timer.periodic(const Duration(milliseconds: 3600), (_) {
+        if (!pageController.hasClients) return;
+        final nextIdx = (currentAdIndex + 1) % promoSlides.length;
+        pageController.animateToPage(
+          nextIdx,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeOutCubic,
+        );
+      });
+    }
 
     await showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Dismiss Ad',
-      barrierColor: Colors.black.withValues(alpha: 0.7),
-      transitionDuration: const Duration(milliseconds: 280),
+      barrierColor: Colors.black.withValues(alpha: 0.82),
+      transitionDuration: const Duration(milliseconds: 320),
       transitionBuilder: (dialogCtx, anim1, anim2, child) {
         return Transform.scale(
           scale: Curves.easeOutBack.transform(anim1.value),
@@ -425,131 +507,291 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       },
       pageBuilder: (dialogContext, _, _) {
         final screen = MediaQuery.of(dialogContext).size;
-        // Mở rộng modal: 94% chiều rộng, 78% chiều cao màn hình
-        // để ảnh quảng cáo hiển thị rõ nét và lớn nhất có thể
-        final modalWidth = screen.width * 0.94;
-        final modalHeight = screen.height * 0.78;
+        final modalWidth = screen.width;
+        final modalHeight = screen.height * 0.74;
 
         return BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
           child: Center(
             child: StatefulBuilder(
               builder: (ctx, setModalState) {
-                final ad = ads[currentAdIndex];
-                final foodId = ad.linkedFoodId;
-                final linkedFood = foodId != null
-                    ? widget.foods.where((f) => f.id == foodId).firstOrNull
-                    : null;
-
-                void onImageTap() {
-                  Navigator.of(dialogContext).pop();
-                  if (linkedFood != null) {
-                    _openFoodDetail(linkedFood);
-                  } else if (widget.foods.isNotEmpty) {
-                    final matched = widget.foods
-                        .where(
-                          (f) =>
-                              ad.title.toLowerCase().contains(
-                                f.name.toLowerCase(),
-                              ) ||
-                              f.name.toLowerCase().contains(
-                                ad.title.toLowerCase(),
-                              ),
-                        )
-                        .firstOrNull;
-                    if (matched != null) {
-                      _openFoodDetail(matched);
-                    }
-                  }
-                }
-
                 return Material(
                   color: Colors.transparent,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Full poster image container with close 'X' button on corner
+                      // Header nhỏ chỉ dẫn
+                      if (promoSlides.length > 1)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.swipe_rounded,
+                                  color: Colors.white70,
+                                  size: 14,
+                                ),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Vuốt sang để xem thêm ưu đãi',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
                       SizedBox(
                         width: modalWidth,
                         height: modalHeight,
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            // Full Poster Image (Tap to open detail page)
+                            // Carousel PageView (Hiệu ứng Coverflow dạng App xem phim)
                             Positioned.fill(
-                              child: GestureDetector(
-                                onTap: onImageTap,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(18),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.55,
+                              child: PageView.builder(
+                                controller: pageController,
+                                itemCount: promoSlides.length,
+                                onPageChanged: (idx) {
+                                  setModalState(() => currentAdIndex = idx);
+                                },
+                                itemBuilder: (context, idx) {
+                                  final slide = promoSlides[idx];
+                                  final title = slide['title'] as String? ?? '';
+                                  final subtitle = slide['subtitle'] as String?;
+                                  final badge = slide['badge'] as String? ?? '';
+                                  final badgeColor =
+                                      slide['badgeColor'] as Color? ??
+                                      AppColors.orange;
+                                  final food = slide['food'] as FoodItem?;
+
+                                  return AnimatedBuilder(
+                                    animation: pageController,
+                                    builder: (context, child) {
+                                      double scale = 1.0;
+                                      double opacity = 1.0;
+                                      if (pageController
+                                          .position
+                                          .haveDimensions) {
+                                        final page =
+                                            pageController.page ??
+                                            currentAdIndex.toDouble();
+                                        final diff = (page - idx).abs();
+                                        // Poster ở giữa phóng to 1.0, hai bên thu nhỏ 0.86 và mờ nhẹ
+                                        scale = (1 - (diff * 0.14)).clamp(
+                                          0.86,
+                                          1.0,
+                                        );
+                                        opacity = (1 - (diff * 0.35)).clamp(
+                                          0.65,
+                                          1.0,
+                                        );
+                                      } else {
+                                        scale = idx == currentAdIndex
+                                            ? 1.0
+                                            : 0.88;
+                                        opacity = idx == currentAdIndex
+                                            ? 1.0
+                                            : 0.7;
+                                      }
+                                      return Center(
+                                        child: Transform.scale(
+                                          scale: scale,
+                                          child: Opacity(
+                                            opacity: opacity,
+                                            child: child,
+                                          ),
                                         ),
-                                        blurRadius: 28,
-                                        offset: const Offset(0, 10),
-                                      ),
-                                    ],
-                                  ),
-                                  clipBehavior: Clip.antiAlias,
-                                  child: ads.length > 1
-                                      ? PageView.builder(
-                                          controller: pageController,
-                                          itemCount: ads.length,
-                                          onPageChanged: (idx) {
-                                            setModalState(
-                                              () => currentAdIndex = idx,
-                                            );
-                                          },
-                                          itemBuilder: (context, idx) {
-                                            final currentAd = ads[idx];
-                                            return AppImage(
-                                              source: currentAd.image,
-                                              // BoxFit.cover: lấp đầy khung, không để viền trắng
+                                      );
+                                    },
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        Navigator.of(dialogContext).pop();
+                                        if (food != null) {
+                                          _openFoodDetail(food);
+                                        }
+                                      },
+                                      child: Container(
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            22,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withValues(
+                                                alpha: 0.55,
+                                              ),
+                                              blurRadius: 28,
+                                              offset: const Offset(0, 12),
+                                            ),
+                                          ],
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            // Ảnh poster bìa tràn viền
+                                            AppImage(
+                                              source: slide['image'] as String,
                                               fit: BoxFit.cover,
-                                            );
-                                          },
-                                        )
-                                      : AppImage(
-                                          source: ad.image,
-                                          fit: BoxFit.cover,
+                                            ),
+
+                                            // Lớp phủ Gradient đen điện ảnh phía dưới
+                                            Positioned.fill(
+                                              child: DecoratedBox(
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    begin: Alignment.topCenter,
+                                                    end: Alignment.bottomCenter,
+                                                    colors: [
+                                                      Colors.transparent,
+                                                      Colors.transparent,
+                                                      Colors.black.withValues(
+                                                        alpha: 0.45,
+                                                      ),
+                                                      Colors.black.withValues(
+                                                        alpha: 0.92,
+                                                      ),
+                                                    ],
+                                                    stops: const [
+                                                      0.0,
+                                                      0.45,
+                                                      0.7,
+                                                      1.0,
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+
+                                            // Thông tin tên món và huy hiệu
+                                            Positioned(
+                                              left: 16,
+                                              right: 16,
+                                              bottom: 18,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (badge.isNotEmpty)
+                                                    Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                            vertical: 3.5,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: badgeColor,
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              6,
+                                                            ),
+                                                      ),
+                                                      child: Text(
+                                                        badge,
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 10.5,
+                                                          fontWeight:
+                                                              FontWeight.w900,
+                                                          letterSpacing: 0.4,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  const SizedBox(height: 6),
+                                                  Text(
+                                                    title,
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 16.5,
+                                                      fontWeight:
+                                                          FontWeight.w900,
+                                                      height: 1.25,
+                                                    ),
+                                                  ),
+                                                  if (subtitle != null &&
+                                                      subtitle.isNotEmpty) ...[
+                                                    const SizedBox(height: 3),
+                                                    Text(
+                                                      subtitle,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        color: Colors.white
+                                                            .withValues(
+                                                              alpha: 0.85,
+                                                            ),
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                ),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
 
-                            // Close 'X' button on top-right corner
+                            // Nút 'X' đóng ở góc trên bên phải
                             Positioned(
-                              top: 8,
-                              right: 8,
+                              top: 10,
+                              right: 20,
                               child: GestureDetector(
                                 onTap: () => Navigator.of(dialogContext).pop(),
                                 child: Container(
-                                  width: 32,
-                                  height: 32,
+                                  width: 36,
+                                  height: 36,
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.65),
+                                    color: Colors.black.withValues(alpha: 0.75),
                                     shape: BoxShape.circle,
                                     border: Border.all(
                                       color: Colors.white.withValues(
-                                        alpha: 0.45,
+                                        alpha: 0.5,
                                       ),
-                                      width: 1.2,
+                                      width: 1.5,
                                     ),
                                     boxShadow: [
                                       BoxShadow(
                                         color: Colors.black.withValues(
-                                          alpha: 0.35,
+                                          alpha: 0.45,
                                         ),
-                                        blurRadius: 6,
+                                        blurRadius: 8,
                                       ),
                                     ],
                                   ),
                                   child: const Icon(
                                     Icons.close_rounded,
                                     color: Colors.white,
-                                    size: 18,
+                                    size: 20,
                                   ),
                                 ),
                               ),
@@ -558,21 +800,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       ),
 
-                      // Dots indicator (only if more than 1 ad)
-                      if (ads.length > 1) ...[
-                        const SizedBox(height: 12),
+                      // Thanh chấm tròn chỉ số banner (Dots indicator)
+                      if (promoSlides.length > 1) ...[
+                        const SizedBox(height: 16),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(ads.length, (idx) {
+                          children: List.generate(promoSlides.length, (idx) {
                             final isActive = idx == currentAdIndex;
                             return AnimatedContainer(
                               duration: const Duration(milliseconds: 250),
-                              margin: const EdgeInsets.symmetric(horizontal: 3),
-                              width: isActive ? 16 : 6,
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 3.5,
+                              ),
+                              width: isActive ? 22 : 6,
                               height: 6,
                               decoration: BoxDecoration(
                                 color: isActive
-                                    ? Colors.white
+                                    ? AppColors.orange
                                     : Colors.white.withValues(alpha: 0.4),
                                 borderRadius: BorderRadius.circular(3),
                               ),
@@ -589,6 +833,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
       },
     );
+
+    autoSlideTimer?.cancel();
+    pageController.dispose();
   }
 
   Future<void> _showAnnouncements() async {
@@ -941,14 +1188,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               if (_query.isEmpty && widget.announcements.isNotEmpty)
                 SliverToBoxAdapter(child: _buildAnnouncementTicker()),
 
-              // 3. Real Flash Sale Section (If active in database and within time window)
+              // 3. Banner Quảng Cáo Món Mới (Hiệu ứng lướt Coverflow phim - chỉ hiển thị quảng cáo từ DB)
+              if (_query.isEmpty && widget.advertisements.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: HomeAdvertisementBanner(
+                    advertisements: widget.advertisements,
+                    foods: widget.foods,
+                    onAddToCart: widget.onAddToCart,
+                    onTapFood: _openFoodDetail,
+                  ),
+                ),
+
+              // 4. Real Flash Sale Section (If active in database and within time window)
               if (activeSale != null &&
                   activeSale.items.isNotEmpty &&
                   _isFlashSaleTimeActive &&
                   _query.isEmpty)
                 SliverToBoxAdapter(child: _buildFlashSaleSection(activeSale)),
 
-              // 4. Combo Carousel Banner (Real from DB)
+              // 5. Combo Carousel Banner (Real from DB)
               if (_query.isEmpty && widget.combos.isNotEmpty)
                 SliverToBoxAdapter(
                   child: HomeComboCarousel(
@@ -4240,7 +4498,521 @@ class _FooterMapPainter extends CustomPainter {
 }
 
 // ============================================================================
-// HOME COMBO CAROUSEL (Isolated StatefulWidget to prevent full-screen lag)
+// HOME ADVERTISEMENT BANNER (Cinematic Coverflow Movie-Style Banner for Ads)
+// ============================================================================
+
+class _AdSlideItem {
+  const _AdSlideItem({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.imageUrl,
+    this.price,
+    this.food,
+    required this.onTap,
+    required this.onAddToCart,
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+  final String imageUrl;
+  final int? price;
+  final FoodItem? food;
+  final VoidCallback onTap;
+  final VoidCallback onAddToCart;
+}
+
+class HomeAdvertisementBanner extends StatefulWidget {
+  const HomeAdvertisementBanner({
+    super.key,
+    required this.advertisements,
+    this.foods = const [],
+    required this.onAddToCart,
+    this.onTapFood,
+  });
+
+  final List<HomeAdvertisement> advertisements;
+  final List<FoodItem> foods;
+  final ValueChanged<String> onAddToCart;
+  final void Function(FoodItem)? onTapFood;
+
+  @override
+  State<HomeAdvertisementBanner> createState() =>
+      _HomeAdvertisementBannerState();
+}
+
+class _HomeAdvertisementBannerState extends State<HomeAdvertisementBanner> {
+  late final PageController _pageController;
+  int _currentPage = 0;
+  Timer? _autoScrollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    final hasMultiple = widget.advertisements.length > 1;
+    _pageController = PageController(
+      viewportFraction: hasMultiple ? 0.85 : 0.94,
+      initialPage: 0,
+    );
+    _startAutoScroll(widget.advertisements.length);
+  }
+
+  List<_AdSlideItem> _buildSlides() {
+    final slides = <_AdSlideItem>[];
+    for (final ad in widget.advertisements) {
+      if (ad.image.trim().isEmpty) continue;
+
+      FoodItem? linkedFood;
+      if (ad.linkedFoodId != null) {
+        linkedFood = widget.foods
+            .where((f) => f.id == ad.linkedFoodId)
+            .firstOrNull;
+      }
+      if (linkedFood == null && ad.title.trim().isNotEmpty) {
+        final cleanTitle = ad.title.toLowerCase().trim();
+        linkedFood = widget.foods
+            .where(
+              (f) =>
+                  cleanTitle.contains(f.name.toLowerCase().trim()) ||
+                  f.name.toLowerCase().trim().contains(cleanTitle),
+            )
+            .firstOrNull;
+      }
+
+      slides.add(
+        _AdSlideItem(
+          id: 'ad_${ad.id}',
+          title: ad.title.isNotEmpty
+              ? ad.title
+              : (linkedFood?.name ?? 'Món Mới Bếp 1979'),
+          subtitle: (linkedFood?.description.isNotEmpty ?? false)
+              ? linkedFood!.description
+              : 'Món mới đặc sắc hôm nay • Thử ngay',
+          imageUrl: ad.image,
+          price: linkedFood?.price,
+          food: linkedFood,
+          onTap: () {
+            if (linkedFood != null) {
+              widget.onTapFood?.call(linkedFood);
+            } else if (widget.foods.isNotEmpty) {
+              widget.onTapFood?.call(widget.foods.first);
+            }
+          },
+          onAddToCart: () {
+            if (linkedFood != null) {
+              widget.onAddToCart(linkedFood.name);
+            } else {
+              widget.onAddToCart(ad.title);
+            }
+          },
+        ),
+      );
+    }
+    return slides;
+  }
+
+  void _startAutoScroll(int totalSlides) {
+    _autoScrollTimer?.cancel();
+    if (totalSlides <= 1) return;
+
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 3800), (
+      timer,
+    ) {
+      if (!mounted || !_pageController.hasClients) return;
+      final nextPage = (_currentPage + 1) % totalSlides;
+      _pageController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOutCubic,
+      );
+    });
+  }
+
+  void _pauseAutoScroll() {
+    _autoScrollTimer?.cancel();
+  }
+
+  String _formatPrice(int value) {
+    final digits = value.toString();
+    final chunks = <String>[];
+    for (var end = digits.length; end > 0; end -= 3) {
+      chunks.insert(0, digits.substring((end - 3).clamp(0, end), end));
+    }
+    return '${chunks.join('.')}đ';
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final slides = _buildSlides();
+    if (slides.isEmpty) return const SizedBox.shrink();
+
+    final hasMultiple = slides.length > 1;
+
+    return Column(
+      children: [
+        // Tiêu đề banner & chỉ báo dot kiểu app xem phim
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.campaign_rounded,
+                      color: AppColors.orange,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'MÓN MỚI NỔI BẬT',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.ink,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+              if (hasMultiple)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(
+                    slides.length,
+                    (index) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 260),
+                      margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                      width: _currentPage == index ? 18 : 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: _currentPage == index
+                            ? AppColors.orange
+                            : const Color(0xFFD1D5DB),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        // Movie Coverflow Carousel lướt giữa các banner quảng cáo
+        SizedBox(
+          height: 195,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification) {
+                _pauseAutoScroll();
+              } else if (notification is ScrollEndNotification) {
+                _startAutoScroll(slides.length);
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: slides.length,
+              onPageChanged: (index) {
+                setState(() => _currentPage = index);
+              },
+              itemBuilder: (context, index) {
+                final slide = slides[index];
+
+                return AnimatedBuilder(
+                  animation: _pageController,
+                  builder: (context, child) {
+                    if (!hasMultiple) return child!;
+                    double value = 0.0;
+                    if (_pageController.position.haveDimensions) {
+                      value =
+                          (_pageController.page ?? _currentPage.toDouble()) -
+                          index;
+                    } else {
+                      value = (_currentPage - index).toDouble();
+                    }
+                    final diff = value.abs();
+
+                    // Movie Coverflow: Thẻ active tỷ lệ 1.0, thẻ kế bên hé vào ở tỷ lệ 0.86 & mờ 0.65
+                    final scale = (1.0 - (diff * 0.12)).clamp(0.86, 1.0);
+                    final opacity = (1.0 - (diff * 0.35)).clamp(0.65, 1.0);
+
+                    return Transform.scale(
+                      scale: scale,
+                      child: Opacity(opacity: opacity, child: child),
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 4,
+                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.16),
+                            blurRadius: 12,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Material(
+                          color: Colors.black,
+                          child: InkWell(
+                            onTap: slide.onTap,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                // 1. Ảnh nền món mới (từ DB quảng cáo)
+                                AppImage(
+                                  source: slide.imageUrl,
+                                  fit: BoxFit.cover,
+                                ),
+
+                                // 2. Lớp gradient & vignette điện ảnh
+                                DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withValues(alpha: 0.45),
+                                        Colors.transparent,
+                                        Colors.black.withValues(alpha: 0.70),
+                                        Colors.black.withValues(alpha: 0.92),
+                                      ],
+                                      stops: const [0.0, 0.28, 0.65, 1.0],
+                                    ),
+                                  ),
+                                ),
+
+                                // 3. Huy hiệu góc trên (Badge món mới)
+                                Positioned(
+                                  top: 10,
+                                  left: 10,
+                                  right: 10,
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3.5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(
+                                            colors: [
+                                              Color(0xFFE53935),
+                                              Color(0xFFFF7043),
+                                            ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: const Color(0xFFE53935)
+                                                  .withValues(alpha: 0.4),
+                                              blurRadius: 6,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: const Text(
+                                          '🔥 MÓN MỚI',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.45,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.25,
+                                            ),
+                                            width: 0.8,
+                                          ),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              '⭐',
+                                              style: TextStyle(fontSize: 9),
+                                            ),
+                                            SizedBox(width: 3),
+                                            Text(
+                                              'Bếp 1979',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                // 4. Nội dung phía dưới (Tên món, mô tả, giá và nút bấm)
+                                Positioned(
+                                  left: 12,
+                                  right: 12,
+                                  bottom: 10,
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              slide.title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15.5,
+                                                fontWeight: FontWeight.w900,
+                                                letterSpacing: -0.2,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              slide.subtitle,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.85,
+                                                ),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                            if (slide.price != null) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                _formatPrice(slide.price!),
+                                                style: const TextStyle(
+                                                  color: Color(0xFFFFD54F),
+                                                  fontSize: 15.5,
+                                                  fontWeight: FontWeight.w900,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      GestureDetector(
+                                        onTap: slide.onAddToCart,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 11,
+                                            vertical: 6.5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [
+                                                Color(0xFFFF6D00),
+                                                Color(0xFFFF9100),
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              20,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: const Color(0xFFFF6D00)
+                                                    .withValues(alpha: 0.4),
+                                                blurRadius: 6,
+                                                offset: const Offset(0, 2),
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.play_arrow_rounded,
+                                                size: 15,
+                                                color: Colors.white,
+                                              ),
+                                              SizedBox(width: 2),
+                                              Text(
+                                                'Đặt món',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+      ],
+    );
+  }
+}
+
+// ============================================================================
+// HOME COMBO CAROUSEL (Dedicated Section for Combos)
 // ============================================================================
 
 class HomeComboCarousel extends StatefulWidget {
@@ -4422,10 +5194,7 @@ class _HomeComboCarouselState extends State<HomeComboCarousel> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          // 1. Ảnh combo nền có cache đĩa
                           AppImage(source: combo.image, fit: BoxFit.cover),
-
-                          // 2. Lớp phủ gradient tối ưu hiệu năng
                           DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -4440,8 +5209,6 @@ class _HomeComboCarouselState extends State<HomeComboCarousel> {
                               ),
                             ),
                           ),
-
-                          // 3. Nội dung thông tin combo & nút bấm
                           Positioned(
                             left: 14,
                             right: 14,

@@ -12,11 +12,13 @@ class OrdersScreen extends StatefulWidget {
   const OrdersScreen({
     super.key,
     this.session,
+    this.refreshKey = 0,
     required this.onGoToMenu,
     required this.onAddToCart,
   });
 
   final AuthSession? session;
+  final int refreshKey;
   final VoidCallback onGoToMenu;
   final ValueChanged<String> onAddToCart;
 
@@ -46,8 +48,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void didUpdateWidget(covariant OrdersScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.session?.token != widget.session?.token) {
-      _loadInitialOrders();
+    if (oldWidget.session?.token != widget.session?.token ||
+        oldWidget.refreshKey != widget.refreshKey) {
+      _fetchOrdersFromServer(forceRefresh: true);
     }
   }
 

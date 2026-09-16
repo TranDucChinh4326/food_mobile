@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/app_theme.dart';
 import '../models/auth_session.dart';
@@ -805,6 +806,98 @@ class _AccountScreenState extends State<AccountScreen>
     );
   }
 
+  /// Mở màn hình quét QR live bằng camera
+  Future<void> _openCameraScanner(
+    Future<void> Function(String scannedValue) onDetected,
+  ) async {
+    final controller = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      formats: const [BarcodeFormat.qrCode],
+    );
+    bool handled = false;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: const Text(
+              'Quét mã QR Web',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            leading: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => Navigator.of(ctx).pop(),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.flash_on, color: Colors.white),
+                onPressed: () => controller.toggleTorch(),
+              ),
+            ],
+          ),
+          body: Stack(
+            children: [
+              MobileScanner(
+                controller: controller,
+                onDetect: (capture) {
+                  if (handled) return;
+                  final barcodes = capture.barcodes;
+                  if (barcodes.isEmpty) return;
+                  final raw = barcodes.first.rawValue ?? '';
+                  if (raw.isEmpty) return;
+                  handled = true;
+                  controller.stop();
+                  Navigator.of(ctx).pop();
+                  onDetected(raw);
+                },
+              ),
+              // Khung ngắm QR
+              Center(
+                child: Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppColors.orange, width: 3),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 40,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'Căn giữa mã QR vào khung cam',
+                      style: TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+  }
+
   void _showWebLoginQrModal() {
     showModalBottomSheet(
       context: context,
@@ -858,48 +951,44 @@ class _AccountScreenState extends State<AccountScreen>
               }
             }
 
-            Future<void> scanWithCamera(ImageSource source) async {
+            Future<void> scanWithCamera() async {
               try {
-                final picker = ImagePicker();
-                final picked = await picker.pickImage(
-                  source: source,
-                  maxWidth: 1280,
-                  maxHeight: 1280,
-                  imageQuality: 85,
-                );
-                if (picked == null) return;
-
-                setModalState(() {
-                  isSubmitting = true;
-                  errorMessage = null;
+                await _openCameraScanner((scannedValue) async {
+                  // QR đã được decode trên thiết bị → gửi lên backend để tìm session
+                  setModalState(() {
+                    isSubmitting = true;
+                    errorMessage = null;
+                  });
+                  try {
+                    final res = await _authService.scanQrSession(
+                      widget.session.token,
+                      scannedValue,
+                    );
+                    if (res['success'] == true) {
+                      setModalState(() {
+                        isSubmitting = false;
+                        currentStep = 'confirm';
+                        targetSessionId = res['sessionId']?.toString();
+                        targetShortCode = res['shortCode']?.toString();
+                      });
+                    } else {
+                      setModalState(() {
+                        isSubmitting = false;
+                        errorMessage = res['message']?.toString() ?? 'Không tìm thấy phiên đăng nhập. Mã QR có thể đã hết hạn.';
+                      });
+                    }
+                  } catch (e) {
+                    setModalState(() {
+                      isSubmitting = false;
+                      errorMessage = e.toString().replaceAll('Exception: ', '');
+                    });
+                  }
                 });
-
-                final bytes = await picked.readAsBytes();
-                final res = await _authService.scanQrImage(
-                  widget.session.token,
-                  bytes,
-                  picked.name,
-                );
-
-                if (res['success'] == true) {
-                  setModalState(() {
-                    isSubmitting = false;
-                    currentStep = 'confirm';
-                    targetSessionId = res['sessionId']?.toString();
-                    targetShortCode = res['shortCode']?.toString();
-                  });
-                } else {
-                  setModalState(() {
-                    isSubmitting = false;
-                    errorMessage =
-                        res['message']?.toString() ??
-                        'Không thể nhận diện mã QR.';
-                  });
-                }
               } catch (e) {
                 setModalState(() {
                   isSubmitting = false;
-                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                  errorMessage =
+                      'Không thể mở camera: ${e.toString().replaceAll('Exception: ', '')}';
                 });
               }
             }
@@ -1108,88 +1197,42 @@ class _AccountScreenState extends State<AccountScreen>
                                 ),
                               ),
                               const SizedBox(height: 14),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    flex: 3,
-                                    child: FilledButton.icon(
-                                      onPressed: isSubmitting
-                                          ? null
-                                          : () => scanWithCamera(
-                                              ImageSource.camera,
-                                            ),
-                                      icon: isSubmitting
-                                          ? const SizedBox(
-                                              width: 18,
-                                              height: 18,
-                                              child: CircularProgressIndicator(
-                                                color: Colors.white,
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.photo_camera_rounded,
-                                              size: 19,
-                                            ),
-                                      label: const Text(
-                                        'Mở Camera quét mã',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13.5,
-                                        ),
-                                      ),
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor: AppColors.orange,
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: isSubmitting
+                                      ? null
+                                      : scanWithCamera,
+                                  icon: isSubmitting
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
                                           ),
+                                        )
+                                      : const Icon(
+                                          Icons.qr_code_scanner_rounded,
+                                          size: 20,
                                         ),
-                                      ),
+                                  label: const Text(
+                                    'Mở Camera quét mã QR',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    flex: 2,
-                                    child: OutlinedButton.icon(
-                                      onPressed: isSubmitting
-                                          ? null
-                                          : () => scanWithCamera(
-                                              ImageSource.gallery,
-                                            ),
-                                      icon: const Icon(
-                                        Icons.photo_library_outlined,
-                                        size: 17,
-                                        color: AppColors.ink,
-                                      ),
-                                      label: const Text(
-                                        'Từ ảnh',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 13,
-                                          color: AppColors.ink,
-                                        ),
-                                      ),
-                                      style: OutlinedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
-                                        side: BorderSide(
-                                          color: Colors.grey.shade300,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        backgroundColor: Colors.white,
-                                      ),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: AppColors.orange,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 14,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
                                   ),
-                                ],
+                                ),
                               ),
                             ],
                           ),
@@ -1286,11 +1329,7 @@ class _AccountScreenState extends State<AccountScreen>
                                     ),
                                   ),
                                 ),
-                                onChanged: (val) {
-                                  if (val.trim().length >= 6) {
-                                    submitScan(val);
-                                  }
-                                },
+                                onSubmitted: (val) => submitScan(val),
                               ),
                               if (errorMessage != null) ...[
                                 const SizedBox(height: 10),

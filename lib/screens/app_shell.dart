@@ -32,6 +32,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  int _ordersRefreshKey = 0;
 
   // ── Giỏ hàng ────────────────────────────────
   final List<CartItem> _cartItems = [];
@@ -192,17 +193,6 @@ class _AppShellState extends State<AppShell> {
     setState(() => _cartItems.clear());
   }
 
-  void _handleCheckout() {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Tính năng đặt hàng đang phát triển! 🚀'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-
   // ──────────────────────────────────────────────
   // Favorites
   // ──────────────────────────────────────────────
@@ -262,18 +252,26 @@ class _AppShellState extends State<AppShell> {
       // 1 — Đơn hàng
       OrdersScreen(
         session: widget.session,
+        refreshKey: _ordersRefreshKey,
         onGoToMenu: () => setState(() => _selectedIndex = 0),
         onAddToCart: (name) => _addToCart(name),
       ),
 
-      // 2 — Giỏ hàng (thay thế Yêu thích cũ)
+      // 2 — Giỏ hàng (tính phí ship, voucher, giao hàng COD)
       CartScreen(
         items: _cartItems,
+        session: widget.session,
         onUpdateQuantity: _updateCartQuantity,
         onRemoveItem: _removeCartItem,
         onClearCart: _clearCart,
         onGoToMenu: () => setState(() => _selectedIndex = 0),
-        onCheckout: _handleCheckout,
+        onOrderSuccess: () {
+          _clearCart();
+          setState(() {
+            _ordersRefreshKey++;
+            _selectedIndex = 1;
+          });
+        },
       ),
 
       // 3 — Tài khoản

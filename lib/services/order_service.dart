@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../core/api_config.dart';
+import '../models/checkout_model.dart';
 import '../models/order_item.dart';
 import 'local_cache_service.dart';
 
@@ -106,6 +107,150 @@ class OrderService {
       } catch (e) {
         if (e is Exception) rethrow;
         throw Exception('Lỗi hủy đơn hàng (${response.statusCode})');
+      }
+    }
+  }
+
+  /// Lấy danh sách hình thức giao hàng khả dụng
+  Future<List<ShippingMethod>> fetchShippingMethods() async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/shipping-methods');
+    final response = await _client.get(
+      uri,
+      headers: {'Accept': 'application/json'},
+    );
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final body = utf8.decode(response.bodyBytes);
+      final rawList = jsonDecode(body) as List<dynamic>;
+      return rawList
+          .whereType<Map<String, dynamic>>()
+          .map(ShippingMethod.fromJson)
+          .toList();
+    } else {
+      throw Exception('Không thể tải hình thức giao hàng');
+    }
+  }
+
+  /// Tính báo giá vận chuyển dựa theo địa chỉ và hình thức giao hàng
+  Future<ShippingQuote> getShippingQuote({
+    required int shippingMethodId,
+    required String customerAddress,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/shipping/quote');
+    final response = await _client.post(
+      uri,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'shippingMethodId': shippingMethodId,
+        'customerAddress': customerAddress,
+      }),
+    );
+
+    final body = utf8.decode(response.bodyBytes);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      return ShippingQuote.fromJson(data);
+    } else {
+      try {
+        final err = jsonDecode(body);
+        throw Exception(err['message'] ?? 'Không thể tính phí vận chuyển');
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('Lỗi tính phí vận chuyển (${response.statusCode})');
+      }
+    }
+  }
+
+  /// Xem trước áp dụng voucher/mã giảm giá trên đơn hàng và phí ship
+  Future<DiscountPreview> previewDiscount({
+    required String token,
+    String? discountCode,
+    int? userDiscountId,
+    required int itemsSubtotal,
+    required int shippingFee,
+    required int shippingMethodId,
+    required String customerAddress,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/discount/preview');
+    final response = await _client.post(
+      uri,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'discountCode': userDiscountId != null ? '' : (discountCode ?? ''),
+        'userDiscountId': userDiscountId,
+        'itemsSubtotal': itemsSubtotal,
+        'shippingFee': shippingFee,
+        'shippingMethodId': shippingMethodId,
+        'customerAddress': customerAddress,
+      }),
+    );
+
+    final body = utf8.decode(response.bodyBytes);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      return DiscountPreview.fromJson(data);
+    } else {
+      try {
+        final err = jsonDecode(body);
+        throw Exception(err['message'] ?? 'Mã giảm giá không hợp lệ');
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('Lỗi kiểm tra voucher (${response.statusCode})');
+      }
+    }
+  }
+
+  /// Đặt đơn hàng mới
+  Future<Map<String, dynamic>> createOrder({
+    required String token,
+    required String customerName,
+    required String customerPhone,
+    required String customerAddress,
+    String? customerNote,
+    String paymentMethod = 'cod',
+    required int shippingMethodId,
+    String? discountCode,
+    int? userDiscountId,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders');
+    final response = await _client.post(
+      uri,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'customerName': customerName,
+        'customerPhone': customerPhone,
+        'customerAddress': customerAddress,
+        'customerNote': customerNote ?? '',
+        'paymentMethod': paymentMethod,
+        'shippingMethodId': shippingMethodId,
+        'discountCode': discountCode ?? '',
+        'userDiscountId': userDiscountId,
+        'items': items,
+      }),
+    );
+
+    final body = utf8.decode(response.bodyBytes);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(body) as Map<String, dynamic>;
+    } else {
+      try {
+        final err = jsonDecode(body);
+        throw Exception(err['message'] ?? 'Không thể đặt hàng');
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('Lỗi gửi đơn hàng (${response.statusCode})');
       }
     }
   }
