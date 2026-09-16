@@ -4586,8 +4586,8 @@ class _HomeAdvertisementBannerState extends State<HomeAdvertisementBanner> {
           title: ad.title.isNotEmpty
               ? ad.title
               : (linkedFood?.name ?? 'Món Mới Bếp 1979'),
-          subtitle: (linkedFood?.description.isNotEmpty ?? false)
-              ? linkedFood!.description
+          subtitle: linkedFood?.description?.trim().isNotEmpty == true
+              ? linkedFood!.description!.trim()
               : 'Món mới đặc sắc hôm nay • Thử ngay',
           imageUrl: ad.image,
           price: linkedFood?.price,
