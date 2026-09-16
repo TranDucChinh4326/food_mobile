@@ -421,7 +421,48 @@ class AuthService {
   ) async {
     return _post('/auth/qr/session/scan', token, {
       'sessionId': codeOrSessionId.trim(),
+      'code': codeOrSessionId.trim(),
     });
+  }
+
+  Future<Map<String, dynamic>> scanQrImage(
+    String token,
+    List<int> imageBytes,
+    String filename,
+  ) async {
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/auth/qr/session/scan-image');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['Authorization'] = 'Bearer $token'
+        ..headers['Accept'] = 'application/json';
+
+      final ext = filename.split('.').last.toLowerCase();
+      final mime = ext == 'png' ? 'image/png' : 'image/jpeg';
+
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'image',
+          imageBytes,
+          filename: filename,
+          contentType: MediaType.parse(mime),
+        ),
+      );
+
+      final streamed = await _client.send(request);
+      final response = await http.Response.fromStream(streamed);
+      final data = _decode(response);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(
+          data['message']?.toString() ?? 'Không thể nhận diện mã QR từ ảnh.',
+          statusCode: response.statusCode,
+        );
+      }
+      return data;
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException(e.toString().replaceAll('Exception: ', ''));
+    }
   }
 
   Future<Map<String, dynamic>> confirmQrSession(
@@ -430,6 +471,7 @@ class AuthService {
   ) async {
     return _post('/auth/qr/session/confirm', token, {
       'sessionId': sessionId.trim(),
+      'code': sessionId.trim(),
     });
   }
 
@@ -439,6 +481,7 @@ class AuthService {
   ) async {
     return _post('/auth/qr/session/reject', token, {
       'sessionId': sessionId.trim(),
+      'code': sessionId.trim(),
     });
   }
 

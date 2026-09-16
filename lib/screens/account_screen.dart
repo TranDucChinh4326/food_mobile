@@ -846,7 +846,54 @@ class _AccountScreenState extends State<AccountScreen>
                   setModalState(() {
                     isSubmitting = false;
                     errorMessage =
-                        res['message']?.toString() ?? 'Mã QR không hợp lệ.';
+                        res['message']?.toString() ??
+                        'Mã QR không hợp lệ hoặc đã hết hạn.';
+                  });
+                }
+              } catch (e) {
+                setModalState(() {
+                  isSubmitting = false;
+                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                });
+              }
+            }
+
+            Future<void> scanWithCamera(ImageSource source) async {
+              try {
+                final picker = ImagePicker();
+                final picked = await picker.pickImage(
+                  source: source,
+                  maxWidth: 1280,
+                  maxHeight: 1280,
+                  imageQuality: 85,
+                );
+                if (picked == null) return;
+
+                setModalState(() {
+                  isSubmitting = true;
+                  errorMessage = null;
+                });
+
+                final bytes = await picked.readAsBytes();
+                final res = await _authService.scanQrImage(
+                  widget.session.token,
+                  bytes,
+                  picked.name,
+                );
+
+                if (res['success'] == true) {
+                  setModalState(() {
+                    isSubmitting = false;
+                    currentStep = 'confirm';
+                    targetSessionId = res['sessionId']?.toString();
+                    targetShortCode = res['shortCode']?.toString();
+                  });
+                } else {
+                  setModalState(() {
+                    isSubmitting = false;
+                    errorMessage =
+                        res['message']?.toString() ??
+                        'Không thể nhận diện mã QR.';
                   });
                 }
               } catch (e) {
@@ -888,7 +935,8 @@ class _AccountScreenState extends State<AccountScreen>
                   setModalState(() {
                     isSubmitting = false;
                     errorMessage =
-                        res['message']?.toString() ?? 'Không thể xác nhận.';
+                        res['message']?.toString() ??
+                        'Không thể xác nhận đăng nhập.';
                   });
                 }
               } catch (e) {
@@ -979,7 +1027,7 @@ class _AccountScreenState extends State<AccountScreen>
                                 ),
                                 SizedBox(height: 2),
                                 Text(
-                                  'Bếp 1979 · Đăng nhập nhanh không cần mật khẩu',
+                                  'Bếp 1979 · Quét camera hoặc nhập mã 6 số',
                                   style: TextStyle(
                                     fontSize: 11.5,
                                     color: AppColors.muted,
@@ -1001,10 +1049,12 @@ class _AccountScreenState extends State<AccountScreen>
                       const Divider(height: 1, color: AppColors.line),
                       const SizedBox(height: 18),
 
-                      // STEP 1: INPUT CODE OR SCAN
+                      // STEP 1: CAMERA SCAN & INPUT CODE
                       if (currentStep == 'input') ...[
+                        // Option A: Camera QR Scan
                         Container(
-                          padding: const EdgeInsets.all(18),
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
                               colors: [Color(0xFFFFF9F5), Color(0xFFFFF3EC)],
@@ -1019,8 +1069,8 @@ class _AccountScreenState extends State<AccountScreen>
                           child: Column(
                             children: [
                               Container(
-                                width: 56,
-                                height: 56,
+                                width: 52,
+                                height: 52,
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   shape: BoxShape.circle,
@@ -1034,14 +1084,14 @@ class _AccountScreenState extends State<AccountScreen>
                                   ],
                                 ),
                                 child: const Icon(
-                                  Icons.laptop_mac_rounded,
+                                  Icons.camera_alt_rounded,
                                   color: AppColors.orange,
-                                  size: 30,
+                                  size: 28,
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 10),
                               const Text(
-                                'Nhập mã số hiển thị trên Web',
+                                'Quét mã QR trên màn hình Web',
                                 style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,
@@ -1050,48 +1100,186 @@ class _AccountScreenState extends State<AccountScreen>
                               ),
                               const SizedBox(height: 4),
                               const Text(
-                                'Xem mã số 6 chữ số dưới mã QR trên màn hình máy tính của bạn',
+                                'Hướng camera vào mã QR đang hiển thị trên trang đăng nhập máy tính',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: AppColors.muted,
                                 ),
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 14),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    flex: 3,
+                                    child: FilledButton.icon(
+                                      onPressed: isSubmitting
+                                          ? null
+                                          : () => scanWithCamera(
+                                              ImageSource.camera,
+                                            ),
+                                      icon: isSubmitting
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.photo_camera_rounded,
+                                              size: 19,
+                                            ),
+                                      label: const Text(
+                                        'Mở Camera quét mã',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: AppColors.orange,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    flex: 2,
+                                    child: OutlinedButton.icon(
+                                      onPressed: isSubmitting
+                                          ? null
+                                          : () => scanWithCamera(
+                                              ImageSource.gallery,
+                                            ),
+                                      icon: const Icon(
+                                        Icons.photo_library_outlined,
+                                        size: 17,
+                                        color: AppColors.ink,
+                                      ),
+                                      label: const Text(
+                                        'Từ ảnh',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                          color: AppColors.ink,
+                                        ),
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        side: BorderSide(
+                                          color: Colors.grey.shade300,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        backgroundColor: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Divider(color: Colors.grey.shade300),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              child: Text(
+                                'HOẶC NHẬP MÃ 6 CHỮ SỐ',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.8,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Divider(color: Colors.grey.shade300),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Option B: 6-digit Code Input
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey.shade200),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              const Text(
+                                'Mã 6 số hiển thị ngay dưới mã QR trên Web:',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.ink,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
                               TextField(
                                 controller: codeController,
-                                keyboardType: TextInputType.text,
-                                textCapitalization:
-                                    TextCapitalization.characters,
+                                keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                  fontSize: 22,
+                                  fontSize: 24,
                                   fontWeight: FontWeight.w900,
-                                  letterSpacing: 6,
+                                  letterSpacing: 8,
                                   color: AppColors.orange,
                                 ),
                                 decoration: InputDecoration(
                                   hintText: '123456',
                                   hintStyle: TextStyle(
-                                    fontSize: 22,
+                                    fontSize: 24,
                                     fontWeight: FontWeight.w700,
-                                    letterSpacing: 6,
-                                    color: Colors.grey.shade400,
+                                    letterSpacing: 8,
+                                    color: Colors.grey.shade300,
                                   ),
                                   filled: true,
-                                  fillColor: Colors.white,
+                                  fillColor: const Color(0xFFFAFAFA),
                                   contentPadding: const EdgeInsets.symmetric(
                                     horizontal: 16,
-                                    vertical: 14,
+                                    vertical: 12,
                                   ),
                                   border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(12),
                                     borderSide: BorderSide(
                                       color: Colors.grey.shade300,
                                     ),
                                   ),
                                   focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(12),
                                     borderSide: const BorderSide(
                                       color: AppColors.orange,
                                       width: 2,
@@ -1106,26 +1294,50 @@ class _AccountScreenState extends State<AccountScreen>
                               ),
                               if (errorMessage != null) ...[
                                 const SizedBox(height: 10),
-                                Text(
-                                  errorMessage!,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.red,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.red.shade200,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.error_outline_rounded,
+                                        size: 16,
+                                        color: Colors.red.shade700,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          errorMessage!,
+                                          style: TextStyle(
+                                            color: Colors.red.shade800,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 14),
                               SizedBox(
                                 width: double.infinity,
-                                height: 48,
+                                height: 46,
                                 child: FilledButton(
                                   onPressed: isSubmitting
                                       ? null
                                       : () => submitScan(codeController.text),
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: AppColors.orange,
+                                    backgroundColor: AppColors.ink,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -1140,10 +1352,10 @@ class _AccountScreenState extends State<AccountScreen>
                                           ),
                                         )
                                       : const Text(
-                                          'Kiểm tra mã đăng nhập',
+                                          'Kiểm tra & Xác nhận đăng nhập',
                                           style: TextStyle(
                                             fontWeight: FontWeight.w800,
-                                            fontSize: 14.5,
+                                            fontSize: 14,
                                           ),
                                         ),
                                 ),
