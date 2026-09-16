@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../core/app_theme.dart';
@@ -804,6 +805,677 @@ class _AccountScreenState extends State<AccountScreen>
     );
   }
 
+  void _showWebLoginQrModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (modalCtx) {
+        final codeController = TextEditingController();
+        String currentStep = 'input'; // 'input' | 'confirm' | 'success'
+        bool isSubmitting = false;
+        String? errorMessage;
+        String? targetSessionId;
+        String? targetShortCode;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> submitScan(String rawCode) async {
+              final code = rawCode.trim();
+              if (code.isEmpty) return;
+
+              setModalState(() {
+                isSubmitting = true;
+                errorMessage = null;
+              });
+
+              try {
+                final res = await _authService.scanQrSession(
+                  widget.session.token,
+                  code,
+                );
+
+                if (res['success'] == true) {
+                  setModalState(() {
+                    isSubmitting = false;
+                    currentStep = 'confirm';
+                    targetSessionId = res['sessionId']?.toString();
+                    targetShortCode = res['shortCode']?.toString();
+                  });
+                } else {
+                  setModalState(() {
+                    isSubmitting = false;
+                    errorMessage =
+                        res['message']?.toString() ?? 'Mã QR không hợp lệ.';
+                  });
+                }
+              } catch (e) {
+                setModalState(() {
+                  isSubmitting = false;
+                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                });
+              }
+            }
+
+            Future<void> confirmLogin() async {
+              final codeToConfirm = targetSessionId ?? targetShortCode;
+              if (codeToConfirm == null) return;
+
+              setModalState(() {
+                isSubmitting = true;
+                errorMessage = null;
+              });
+
+              try {
+                final res = await _authService.confirmQrSession(
+                  widget.session.token,
+                  codeToConfirm,
+                );
+
+                if (res['success'] == true) {
+                  setModalState(() {
+                    isSubmitting = false;
+                    currentStep = 'success';
+                  });
+
+                  Future.delayed(const Duration(milliseconds: 1800), () {
+                    if (modalCtx.mounted) {
+                      Navigator.of(modalCtx).pop();
+                      _showToast('Đăng nhập Website thành công! 🎉');
+                    }
+                  });
+                } else {
+                  setModalState(() {
+                    isSubmitting = false;
+                    errorMessage =
+                        res['message']?.toString() ?? 'Không thể xác nhận.';
+                  });
+                }
+              } catch (e) {
+                setModalState(() {
+                  isSubmitting = false;
+                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                });
+              }
+            }
+
+            Future<void> rejectLogin() async {
+              final codeToReject = targetSessionId ?? targetShortCode;
+              if (codeToReject != null) {
+                try {
+                  await _authService.rejectQrSession(
+                    widget.session.token,
+                    codeToReject,
+                  );
+                } catch (_) {}
+              }
+              if (modalCtx.mounted) {
+                Navigator.of(modalCtx).pop();
+                _showToast('Đã từ chối đăng nhập Website.');
+              }
+            }
+
+            final user = widget.session.user;
+
+            return Container(
+              margin: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 20,
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  16,
+                  20,
+                  MediaQuery.of(context).viewInsets.bottom +
+                      MediaQuery.of(context).padding.bottom +
+                      20,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: AppColors.orange.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.qr_code_scanner_rounded,
+                              color: AppColors.orange,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Đăng nhập Website bằng mã QR',
+                                  style: TextStyle(
+                                    fontSize: 16.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.ink,
+                                  ),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Bếp 1979 · Đăng nhập nhanh không cần mật khẩu',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: AppColors.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: AppColors.muted,
+                            ),
+                            onPressed: () => Navigator.of(modalCtx).pop(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      const Divider(height: 1, color: AppColors.line),
+                      const SizedBox(height: 18),
+
+                      // STEP 1: INPUT CODE OR SCAN
+                      if (currentStep == 'input') ...[
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFFF9F5), Color(0xFFFFF3EC)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: AppColors.orange.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.orange.withValues(
+                                        alpha: 0.18,
+                                      ),
+                                      blurRadius: 10,
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.laptop_mac_rounded,
+                                  color: AppColors.orange,
+                                  size: 30,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Nhập mã số hiển thị trên Web',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.ink,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Xem mã số 6 chữ số dưới mã QR trên màn hình máy tính của bạn',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: codeController,
+                                keyboardType: TextInputType.text,
+                                textCapitalization:
+                                    TextCapitalization.characters,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 6,
+                                  color: AppColors.orange,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: '123456',
+                                  hintStyle: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 6,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                      color: Colors.grey.shade300,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.orange,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                                onChanged: (val) {
+                                  if (val.trim().length >= 6) {
+                                    submitScan(val);
+                                  }
+                                },
+                              ),
+                              if (errorMessage != null) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  errorMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: FilledButton(
+                                  onPressed: isSubmitting
+                                      ? null
+                                      : () => submitScan(codeController.text),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: AppColors.orange,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: isSubmitting
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Kiểm tra mã đăng nhập',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 14.5,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBF8),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: const Color(0xFFF3E8E2)),
+                          ),
+                          child: const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.lightbulb_outline_rounded,
+                                    size: 16,
+                                    color: AppColors.orange,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Cách đăng nhập:',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.ink,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 6),
+                              Text(
+                                '1. Mở trang web Bếp 1979 trên máy tính > bấm tab "Quét mã QR".\n'
+                                '2. Nhập mã số 6 chữ số hiển thị ở bên dưới mã QR vào ô trên.\n'
+                                '3. Nhấn "Xác nhận đăng nhập" để vào web ngay lập tức.',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: Color(0xFF6B584F),
+                                  height: 1.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // STEP 2: CONFIRMATION
+                      if (currentStep == 'confirm') ...[
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: AppColors.line),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.04),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 60,
+                                height: 60,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFF4EE),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppColors.orange.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.devices_rounded,
+                                  color: AppColors.orange,
+                                  size: 32,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Xác nhận đăng nhập Web?',
+                                style: TextStyle(
+                                  fontSize: 17.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: AppColors.ink,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Yêu cầu đăng nhập vào trang web Bếp 1979',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.grey.shade200,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Text(
+                                          'Tài khoản:',
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            color: AppColors.muted,
+                                          ),
+                                        ),
+                                        Text(
+                                          user.fullname,
+                                          style: const TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppColors.ink,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        const Text(
+                                          'Email:',
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            color: AppColors.muted,
+                                          ),
+                                        ),
+                                        Text(
+                                          user.email,
+                                          style: const TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.ink,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          'Thiết bị:',
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            color: AppColors.muted,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Website Bếp 1979',
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.orange,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (errorMessage != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  errorMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 20),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: isSubmitting
+                                          ? null
+                                          : rejectLogin,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.red.shade700,
+                                        side: BorderSide(
+                                          color: Colors.red.shade200,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 13,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'Từ chối',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    flex: 2,
+                                    child: FilledButton(
+                                      onPressed: isSubmitting
+                                          ? null
+                                          : confirmLogin,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: AppColors.orange,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 13,
+                                        ),
+                                      ),
+                                      child: isSubmitting
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Text(
+                                              'Xác nhận đăng nhập',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 14.5,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // STEP 3: SUCCESS
+                      if (currentStep == 'success') ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(28),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: Colors.green.shade300),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade600,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.check_rounded,
+                                  color: Colors.white,
+                                  size: 38,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Đăng nhập thành công! 🎉',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF1B5E20),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Trang web Bếp 1979 của bạn đã được đăng nhập tự động.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF2E7D32),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showAddressDialog({UserAddress? existing}) {
     final isEdit = existing != null;
     final labelCtrl = TextEditingController(
@@ -1128,6 +1800,87 @@ class _AccountScreenState extends State<AccountScreen>
           const Divider(height: 1, color: AppColors.line),
           const SizedBox(height: 12),
           _buildSocialAccountsRow(),
+          const SizedBox(height: 14),
+          InkWell(
+            onTap: _showWebLoginQrModal,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFF4EE), Color(0xFFFFECE0)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppColors.orange.withValues(alpha: 0.35),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.orange.withValues(alpha: 0.08),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.orange,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.orange.withValues(alpha: 0.35),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.qr_code_2_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Đăng nhập Website bằng mã QR',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Quét hoặc nhập mã số để đăng nhập nhanh trên máy tính',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.muted,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.orange,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

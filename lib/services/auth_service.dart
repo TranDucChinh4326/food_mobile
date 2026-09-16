@@ -412,6 +412,46 @@ class AuthService {
   }
 
   // ==========================================
+  // QR WEB LOGIN APIs (Web generates QR -> App scans & confirms)
+  // ==========================================
+
+  Future<Map<String, dynamic>> scanQrSession(
+    String token,
+    String codeOrSessionId,
+  ) async {
+    return _post('/auth/qr/session/scan', token, {
+      'sessionId': codeOrSessionId.trim(),
+    });
+  }
+
+  Future<Map<String, dynamic>> confirmQrSession(
+    String token,
+    String sessionId,
+  ) async {
+    return _post('/auth/qr/session/confirm', token, {
+      'sessionId': sessionId.trim(),
+    });
+  }
+
+  Future<Map<String, dynamic>> rejectQrSession(
+    String token,
+    String sessionId,
+  ) async {
+    return _post('/auth/qr/session/reject', token, {
+      'sessionId': sessionId.trim(),
+    });
+  }
+
+  // Legacy
+  Future<Map<String, dynamic>> generateQrLogin(String token) async {
+    return _post('/auth/qr/generate', token, {});
+  }
+
+  Future<Map<String, dynamic>> checkQrStatus(String token, String code) async {
+    return _get('/auth/qr/status/$code', token);
+  }
+
+  // ==========================================
   // HTTP HELPERS
   // ==========================================
 

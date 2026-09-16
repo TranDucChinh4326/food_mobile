@@ -354,7 +354,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
 
                 // 7. Flash Sale Box Banner (nếu đang Flash Sale)
                 if (isSale) ...[
-                  _buildFlashSaleBanner(sale!, discountPercent, savings),
+                  _buildFlashSaleBanner(sale, discountPercent, savings),
                   const SizedBox(height: 14),
                 ],
 
@@ -772,7 +772,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
 
   /// 7. Flash Sale Box Banner
   Widget _buildFlashSaleBanner(
-    FlashSaleItem sale,
+    FlashSaleItem? sale,
     int discountPercent,
     int savings,
   ) {
@@ -891,9 +891,9 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
                     color: Color(0xFFFF0055),
                   ),
                 ),
-              if (sale.remaining != null)
+              if (sale?.remaining != null)
                 Text(
-                  '• Còn lại ${sale.remaining} suất',
+                  '• Còn lại ${sale!.remaining} suất',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
