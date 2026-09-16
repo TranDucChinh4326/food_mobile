@@ -25,6 +25,9 @@ class FoodReviewItem {
 
   factory FoodReviewItem.fromJson(Map<String, dynamic> json) {
     final avatar = normalizeRasterImageUrl(json['avatar']);
+    final rawComment = '${json['comment'] ?? ''}'.trim();
+    final rawCreatedAt =
+        json['createdAt']?.toString() ?? json['created_at']?.toString();
     return FoodReviewItem(
       id: int.tryParse('${json['id']}') ?? 0,
       foodId: int.tryParse('${json['foodId'] ?? json['food_id']}') ?? 0,
@@ -32,12 +35,23 @@ class FoodReviewItem {
       customerName:
           '${json['customerName'] ?? json['customer_name'] ?? 'Khách hàng'}',
       avatar: avatar,
-      rating: int.tryParse('${json['rating']}') ?? 5,
-      comment: '${json['comment'] ?? ''}',
+      rating: (int.tryParse('${json['rating']}') ?? 0).clamp(0, 5),
+      comment:
+          rawComment.isEmpty ||
+              rawComment == 'Khách hàng đã đánh giá món ăn này.'
+          ? 'Khách hàng đã chấm điểm và không để lại bình luận.'
+          : rawComment,
       adminReply:
           json['adminReply']?.toString() ?? json['admin_reply']?.toString(),
-      createdAt:
-          json['createdAt']?.toString() ?? json['created_at']?.toString(),
+      createdAt: _formatDate(rawCreatedAt),
     );
+  }
+
+  static String? _formatDate(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final date = DateTime.tryParse(value)?.toLocal();
+    if (date == null) return value;
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 }

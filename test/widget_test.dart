@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:food_mobile/app.dart';
 import 'package:food_mobile/data/demo_data.dart';
+import 'package:food_mobile/models/combo_item.dart';
 import 'package:food_mobile/screens/home_screen.dart';
 
 void main() {
@@ -11,6 +12,16 @@ void main() {
         home: Scaffold(
           body: HomeScreen(
             foods: demoFoods,
+            combos: const [
+              ComboItem(
+                id: 1,
+                name: 'Combo Cơm Trưa',
+                description: 'Combo đồng bộ từ API',
+                price: 65000,
+                image: 'https://example.com/combo.jpg',
+                maxAvailable: 10,
+              ),
+            ],
             loading: false,
             loadError: null,
             onRetry: () {},

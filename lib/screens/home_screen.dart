@@ -7,6 +7,7 @@ import '../models/combo_item.dart';
 import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
+import '../models/home_content.dart';
 import '../widgets/app_image.dart';
 import '../widgets/food_card.dart';
 import '../widgets/skeleton_loader.dart';
@@ -20,12 +21,17 @@ class HomeScreen extends StatefulWidget {
     this.flashSales = const [],
     this.combos = const [],
     this.reviews = const [],
+    this.categories = const [],
+    this.announcements = const [],
+    this.advertisements = const [],
+    this.availableVoucherCount = 0,
     required this.loading,
     required this.loadError,
     required this.onRetry,
     required this.favorites,
     required this.onAddToCart,
     required this.onToggleFavorite,
+    this.onMarkAnnouncementsRead,
   });
 
   final int cartCount;
@@ -33,12 +39,17 @@ class HomeScreen extends StatefulWidget {
   final List<FlashSaleCampaign> flashSales;
   final List<ComboItem> combos;
   final List<FoodReviewItem> reviews;
+  final List<FoodCategory> categories;
+  final List<HomeAnnouncement> announcements;
+  final List<HomeAdvertisement> advertisements;
+  final int availableVoucherCount;
   final bool loading;
   final String? loadError;
   final VoidCallback onRetry;
   final Set<int> favorites;
   final ValueChanged<String> onAddToCart;
   final ValueChanged<int> onToggleFavorite;
+  final Future<void> Function(List<int>)? onMarkAnnouncementsRead;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -165,6 +176,281 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  FoodCard _buildFoodCard(FoodItem food) {
+    return FoodCard(
+      food: food,
+      isFavorite: widget.favorites.contains(food.id),
+      onFavorite: () => widget.onToggleFavorite(food.id),
+      onAdd: () => widget.onAddToCart(food.name),
+      onTap: () => _openFoodDetail(food),
+    );
+  }
+
+  Widget _buildCategoryFoodSections() {
+    final grouped = <String, List<FoodItem>>{};
+    for (final food in widget.foods) {
+      grouped.putIfAbsent(food.category, () => []).add(food);
+    }
+
+    final orderedNames = <String>[
+      ...widget.categories
+          .where((category) => category.isChild)
+          .map((category) => category.name)
+          .where(grouped.containsKey),
+      ...grouped.keys.where(
+        (name) => !widget.categories.any(
+          (category) => category.isChild && category.name == name,
+        ),
+      ),
+    ];
+
+    return Column(
+      children: orderedNames.map((name) {
+        final items = grouped[name]!.take(4).toList();
+        return Column(
+          children: [
+            _buildSectionHeading(
+              kicker: 'THỰC ĐƠN',
+              title: name,
+              action: 'Xem tất cả',
+              onAction: () => setState(() => _selectedCategory = name),
+            ),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
+              itemCount: items.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 14,
+                childAspectRatio: 0.65,
+              ),
+              itemBuilder: (context, index) => _buildFoodCard(items[index]),
+            ),
+          ],
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildAnnouncementTicker() {
+    return Container(
+      height: 40,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2B1C16),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        scrollDirection: Axis.horizontal,
+        itemCount: widget.announcements.length,
+        separatorBuilder: (_, _) => const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Center(
+            child: Text('•', style: TextStyle(color: AppColors.orange)),
+          ),
+        ),
+        itemBuilder: (context, index) {
+          final item = widget.announcements[index];
+          return InkWell(
+            onTap: _showAnnouncements,
+            child: Center(
+              child: Row(
+                children: [
+                  if (!item.isRead) ...[
+                    const Icon(
+                      Icons.fiber_new,
+                      color: AppColors.orange,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 5),
+                  ],
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildAdvertisements() {
+    return SizedBox(
+      height: 112,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        scrollDirection: Axis.horizontal,
+        itemCount: widget.advertisements.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final advertisement = widget.advertisements[index];
+          return InkWell(
+            onTap: () {
+              final foodId = advertisement.linkedFoodId;
+              final food = widget.foods
+                  .where((item) => item.id == foodId)
+                  .firstOrNull;
+              if (food != null) _openFoodDetail(food);
+            },
+            borderRadius: BorderRadius.circular(10),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 230,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    AppImage(
+                      source: advertisement.image,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const ColoredBox(
+                        color: AppColors.soft,
+                        child: Icon(Icons.campaign, color: AppColors.orange),
+                      ),
+                    ),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Color(0xAA1D100B)],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 8,
+                      child: Text(
+                        advertisement.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _showAnnouncements() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.72,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Text(
+                  'Thông báo',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                ),
+              ),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+                  itemCount: widget.announcements.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final item = widget.announcements[index];
+                    return ListTile(
+                      leading: Icon(
+                        item.isRead
+                            ? Icons.notifications_none
+                            : Icons.notifications_active,
+                        color: item.isRead ? AppColors.muted : AppColors.orange,
+                      ),
+                      title: Text(
+                        item.title,
+                        style: TextStyle(
+                          fontWeight: item.isRead
+                              ? FontWeight.w600
+                              : FontWeight.w900,
+                        ),
+                      ),
+                      subtitle: item.content.isEmpty
+                          ? null
+                          : Text(item.content, maxLines: 3),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final unreadIds = widget.announcements
+        .where((item) => !item.isRead)
+        .map((item) => item.id)
+        .toList();
+    if (unreadIds.isNotEmpty) {
+      try {
+        await widget.onMarkAnnouncementsRead?.call(unreadIds);
+      } catch (_) {
+        if (mounted) _showNotice('Không thể đánh dấu thông báo đã đọc.');
+      }
+    }
+  }
+
+  void _showVoucherSummary() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.confirmation_num_outlined,
+                color: AppColors.orange,
+                size: 34,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  widget.availableVoucherCount > 0
+                      ? 'Bạn có thể nhận ${widget.availableVoucherCount} voucher đang hoạt động.'
+                      : 'Hiện chưa có voucher mới để nhận.',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = widget.foods.where((food) {
@@ -175,9 +461,11 @@ class _HomeScreenState extends State<HomeScreen>
     }).toList();
 
     // Top best sellers sorted by sold count
-    final bestSellers = List<FoodItem>.from(widget.foods)
+    final bestSellers = widget.foods.where((food) => food.sold > 0).toList()
       ..sort((a, b) => b.sold.compareTo(a.sold));
-    final topBestSellers = bestSellers.take(6).toList();
+    final topBestSellers = bestSellers.take(5).toList();
+    final showGroupedCatalog =
+        _query.trim().isEmpty && _selectedCategory == 'Tất cả';
 
     final activeSale = widget.flashSales
         .where((s) => s.items.isNotEmpty)
@@ -193,14 +481,21 @@ class _HomeScreenState extends State<HomeScreen>
           // 2. Search & Filter Bar
           SliverToBoxAdapter(child: _buildSearch()),
 
+          if (_query.isEmpty && widget.announcements.isNotEmpty)
+            SliverToBoxAdapter(child: _buildAnnouncementTicker()),
+
+          if (_query.isEmpty && widget.advertisements.isNotEmpty)
+            SliverToBoxAdapter(child: _buildAdvertisements()),
+
           // 3. Real Flash Sale Section (If active in database)
           if (activeSale != null &&
               activeSale.items.isNotEmpty &&
               _query.isEmpty)
             SliverToBoxAdapter(child: _buildFlashSaleSection(activeSale)),
 
-          // 4. Combo Carousel Banner (Real from DB or fallback)
-          if (_query.isEmpty) SliverToBoxAdapter(child: _buildComboCarousel()),
+          // 4. Combo Carousel Banner (Real from DB)
+          if (_query.isEmpty && widget.combos.isNotEmpty)
+            SliverToBoxAdapter(child: _buildComboCarousel()),
 
           // 5. Store Commitments
           if (_query.isEmpty) SliverToBoxAdapter(child: _buildCommitments()),
@@ -229,37 +524,32 @@ class _HomeScreenState extends State<HomeScreen>
             SliverToBoxAdapter(child: _buildBestSellersStrip(topBestSellers)),
           ],
 
-          // 8. Main Catalog Section Title
-          SliverToBoxAdapter(
-            child: _buildSectionHeading(
-              kicker: 'HÔM NAY CÓ GÌ',
-              title: 'Món ngon hôm nay',
-              action: widget.loading ? 'Đang tải' : '${filtered.length} món',
-              onAction: () {},
-            ),
-          ),
-
-          // 9. Main Catalog Food Grid
           if (widget.loading)
             const SliverToBoxAdapter(child: HomeScreenSkeleton())
           else if (widget.loadError != null)
             SliverToBoxAdapter(child: _buildLoadError())
           else if (filtered.isEmpty)
             SliverToBoxAdapter(child: _buildEmptyState())
-          else
+          else if (showGroupedCatalog)
+            SliverToBoxAdapter(child: _buildCategoryFoodSections())
+          else ...[
+            SliverToBoxAdapter(
+              child: _buildSectionHeading(
+                kicker: 'THỰC ĐƠN',
+                title: _selectedCategory == 'Tất cả'
+                    ? 'Kết quả tìm kiếm'
+                    : _selectedCategory,
+                action: '${filtered.length} món',
+                onAction: () {},
+              ),
+            ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
               sliver: SliverGrid(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  final food = filtered[index];
-                  return FoodCard(
-                    food: food,
-                    isFavorite: widget.favorites.contains(food.id),
-                    onFavorite: () => widget.onToggleFavorite(food.id),
-                    onAdd: () => widget.onAddToCart(food.name),
-                    onTap: () => _openFoodDetail(food),
-                  );
-                }, childCount: filtered.length),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildFoodCard(filtered[index]),
+                  childCount: filtered.length,
+                ),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   mainAxisSpacing: 14,
@@ -268,6 +558,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
+          ],
 
           // 10. Customer Reviews Section (Real from DB or fallback)
           if (_query.isEmpty) SliverToBoxAdapter(child: _buildReviewsSection()),
@@ -281,6 +572,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   // --- HEADER ---
   Widget _buildHeader() {
+    final unreadCount = widget.announcements
+        .where((item) => !item.isRead)
+        .length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 6),
       child: Row(
@@ -340,7 +634,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           IconButton(
-            onPressed: () => _showNotice('Mã voucher giảm giá Bếp 1979'),
+            onPressed: _showVoucherSummary,
             tooltip: 'Voucher khuyến mãi',
             icon: Stack(
               clipBehavior: Clip.none,
@@ -349,30 +643,20 @@ class _HomeScreenState extends State<HomeScreen>
                   Icons.confirmation_num_outlined,
                   color: AppColors.ink,
                 ),
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    padding: const EdgeInsets.all(3.5),
-                    decoration: const BoxDecoration(
-                      color: AppColors.orange,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Text(
-                      '3',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.bold,
-                      ),
+                if (widget.availableVoucherCount > 0)
+                  Positioned(
+                    right: -5,
+                    top: -5,
+                    child: Badge(
+                      label: Text('${widget.availableVoucherCount}'),
+                      backgroundColor: AppColors.orange,
                     ),
                   ),
-                ),
               ],
             ),
           ),
           IconButton(
-            onPressed: () => _showNotice('Bạn chưa có thông báo mới'),
+            onPressed: _showAnnouncements,
             tooltip: 'Thông báo',
             icon: Stack(
               clipBehavior: Clip.none,
@@ -381,18 +665,15 @@ class _HomeScreenState extends State<HomeScreen>
                   Icons.notifications_none_rounded,
                   color: AppColors.ink,
                 ),
-                Positioned(
-                  right: -1,
-                  top: -1,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE53935),
-                      shape: BoxShape.circle,
+                if (unreadCount > 0)
+                  Positioned(
+                    right: -5,
+                    top: -5,
+                    child: Badge(
+                      label: Text('$unreadCount'),
+                      backgroundColor: const Color(0xFFE53935),
                     ),
                   ),
-                ),
               ],
             ),
           ),
@@ -1095,7 +1376,7 @@ class _HomeScreenState extends State<HomeScreen>
   // --- BEST SELLERS STRIP (SORTED FROM LIVE DATABASE) ---
   Widget _buildBestSellersStrip(List<FoodItem> items) {
     return SizedBox(
-      height: 184,
+      height: 196,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
@@ -1378,7 +1659,7 @@ class _HomeScreenState extends State<HomeScreen>
     final double avgRating = totalReviews > 0
         ? (widget.reviews.map((r) => r.rating).reduce((a, b) => a + b) /
               totalReviews)
-        : 4.9;
+        : 0;
 
     final filteredReviews = hasRealReviews
         ? (_selectedReviewRating == 0
@@ -1605,82 +1886,16 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                 }).toList(),
               ),
-          ] else ...[
-            // Notification that DB currently has 0 reviews, with curated preview
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8E1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFFFECB3)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.info_outline,
-                    size: 16,
-                    color: Color(0xFFF57F17),
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'API backend chưa có bình luận mới. Đang hiển thị đánh giá kiểm duyệt mẫu:',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: Color(0xFF795548),
-                      ),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: widget.onRetry,
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                      child: Text(
-                        'Tải lại',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.orange,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+          ] else
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(
+                child: Text(
+                  'Chưa có đánh giá nào được hiển thị.',
+                  style: TextStyle(fontSize: 12, color: AppColors.muted),
+                ),
               ),
             ),
-            Column(
-              children: [
-                _buildReviewTile(
-                  name: 'Trần Minh Tuấn',
-                  food: 'Cơm gà xối mỡ giòn rụm',
-                  rating: 5,
-                  comment: 'Gà chiên giòn rụm, giao hàng đến nơi vẫn còn bốc khói nóng hổi!',
-                  createdAt: '15/09/2026',
-                  adminReply: 'Cảm ơn quý khách đã tin tưởng Bếp 1979! Chúc bạn ngon miệng ạ.',
-                  isRealData: false,
-                ),
-                _buildReviewTile(
-                  name: 'Lê Hoàng Mai',
-                  food: 'Canh chua cá lóc',
-                  rating: 5,
-                  comment: 'Nấu chuẩn vị miền Tây chua thanh đậm đà, đóng gói hộp giấy rất sạch sẽ.',
-                  createdAt: '14/09/2026',
-                  isRealData: false,
-                ),
-                _buildReviewTile(
-                  name: 'Nguyễn Quốc Anh',
-                  food: 'Lẩu Thái Hải Sản',
-                  rating: 5,
-                  comment: 'Đặt cho cả nhà ăn cuối tuần, tôm mực tươi ngọt, nước lẩu ngon tuyệt!',
-                  createdAt: '12/09/2026',
-                  adminReply:
-                      'Dạ Bếp cảm ơn anh và gia đình đã ủng hộ quán nhiều ạ!',
-                  isRealData: false,
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );
@@ -2028,12 +2243,18 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   List<String> get _categories {
-    final categories = widget.foods
+    final foodCategoryNames = widget.foods
         .map((food) => food.category)
         .where((name) => name.trim().isNotEmpty)
-        .toSet()
-        .take(6)
+        .toSet();
+    final apiCategories = widget.categories
+        .where((category) => category.isChild)
+        .where((category) => foodCategoryNames.contains(category.name))
+        .map((category) => category.name)
         .toList();
-    return ['Tất cả', ...categories];
+    final remaining = foodCategoryNames.where(
+      (name) => !apiCategories.contains(name),
+    );
+    return ['Tất cả', ...apiCategories, ...remaining];
   }
 }

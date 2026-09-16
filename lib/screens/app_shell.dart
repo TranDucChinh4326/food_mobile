@@ -6,6 +6,7 @@ import '../models/combo_item.dart';
 import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
+import '../models/home_content.dart';
 import '../services/food_service.dart';
 import 'account_screen.dart';
 import 'home_screen.dart';
@@ -31,6 +32,10 @@ class _AppShellState extends State<AppShell> {
   List<FlashSaleCampaign> _flashSales = const [];
   List<ComboItem> _combos = const [];
   List<FoodReviewItem> _reviews = const [];
+  List<FoodCategory> _categories = const [];
+  List<HomeAnnouncement> _announcements = const [];
+  List<HomeAdvertisement> _advertisements = const [];
+  int _availableVoucherCount = 0;
   bool _loadingFoods = true;
   String? _foodError;
 
@@ -51,6 +56,10 @@ class _AppShellState extends State<AppShell> {
         _foodService.fetchFlashSales(),
         _foodService.fetchCombos(),
         _foodService.fetchReviews(),
+        _foodService.fetchCategories(),
+        _foodService.fetchAnnouncements(widget.session.token),
+        _foodService.fetchAdvertisements(),
+        _foodService.fetchAvailableVoucherCount(widget.session.token),
       ]);
       if (mounted) {
         setState(() {
@@ -58,6 +67,10 @@ class _AppShellState extends State<AppShell> {
           _flashSales = results[1] as List<FlashSaleCampaign>;
           _combos = results[2] as List<ComboItem>;
           _reviews = results[3] as List<FoodReviewItem>;
+          _categories = results[4] as List<FoodCategory>;
+          _announcements = results[5] as List<HomeAnnouncement>;
+          _advertisements = results[6] as List<HomeAdvertisement>;
+          _availableVoucherCount = results[7] as int;
         });
       }
     } catch (error) {
@@ -88,6 +101,21 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
+  Future<void> _markAnnouncementsRead(List<int> ids) async {
+    if (ids.isEmpty) return;
+    await _foodService.markAnnouncementsRead(widget.session.token, ids);
+    if (!mounted) return;
+    final readIds = ids.toSet();
+    setState(() {
+      _announcements = _announcements
+          .map(
+            (item) =>
+                readIds.contains(item.id) ? item.copyWith(isRead: true) : item,
+          )
+          .toList();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = [
@@ -96,6 +124,10 @@ class _AppShellState extends State<AppShell> {
         flashSales: _flashSales,
         combos: _combos,
         reviews: _reviews,
+        categories: _categories,
+        announcements: _announcements,
+        advertisements: _advertisements,
+        availableVoucherCount: _availableVoucherCount,
         loading: _loadingFoods,
         loadError: _foodError,
         onRetry: _loadAllData,
@@ -103,6 +135,7 @@ class _AppShellState extends State<AppShell> {
         favorites: _favorites,
         onAddToCart: _addToCart,
         onToggleFavorite: _toggleFavorite,
+        onMarkAnnouncementsRead: _markAnnouncementsRead,
       ),
       const PlaceholderScreen(
         icon: Icons.receipt_long_outlined,
