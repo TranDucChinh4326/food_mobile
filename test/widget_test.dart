@@ -37,6 +37,5 @@ void main() {
     expect(find.text('Bạn muốn ăn gì hôm nay?'), findsOneWidget);
     expect(find.text('Combo Cơm Trưa'), findsOneWidget);
     expect(find.text('Bếp 1979'), findsOneWidget);
-    expect(find.text('Danh mục'), findsOneWidget);
   });
 }

@@ -46,7 +46,11 @@ class _AuthGateState extends State<AuthGate> {
         onAuthenticated: (session) => setState(() => _session = session),
       );
     }
-    return AppShell(session: _session!, onLogout: _logout);
+    return AppShell(
+      session: _session!,
+      onLogout: _logout,
+      onSessionUpdated: (session) => setState(() => _session = session),
+    );
   }
 }
 

@@ -5,6 +5,7 @@ abstract final class AppColors {
   static const orangeDark = Color(0xFFD9480F);
   static const amber = Color(0xFFFFA726);
   static const ink = Color(0xFF241812);
+  static const inkLight = Color(0xFF4A3E38);
   static const muted = Color(0xFF765F54);
   static const line = Color(0xFFEFD8CC);
   static const soft = Color(0xFFFFF7F2);

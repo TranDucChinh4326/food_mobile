@@ -8,6 +8,7 @@ import '../models/food_item.dart';
 import '../models/food_review_item.dart';
 import '../services/food_service.dart';
 import '../widgets/app_image.dart';
+import '../widgets/neon_spin_border.dart';
 
 class FoodDetailScreen extends StatefulWidget {
   const FoodDetailScreen({
@@ -39,7 +40,6 @@ class FoodDetailScreen extends StatefulWidget {
 
 class _FoodDetailScreenState extends State<FoodDetailScreen> {
   int _quantity = 1;
-  final Set<String> _selectedOptions = {};
   final TextEditingController _notesController = TextEditingController();
 
   final FoodService _foodService = FoodService();
@@ -49,13 +49,6 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
 
   Timer? _countdownTimer;
   Duration _remainingDuration = Duration.zero;
-
-  // 3 Tùy chọn thêm đồng bộ chuẩn Web Bếp 1979
-  final Map<String, int> _webOptions = const {
-    'Thêm phô mai': 15000,
-    'Thêm topping': 25000,
-    'Không hành tây': 0,
-  };
 
   @override
   void initState() {
@@ -74,7 +67,10 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
   FlashSaleItem? get _flashSaleItem {
     for (final campaign in widget.flashSales) {
       for (final item in campaign.items) {
-        if (item.foodId == widget.food.id) {
+        if ((item.foodId > 0 && item.foodId == widget.food.id) ||
+            (widget.food.name.isNotEmpty &&
+                item.name.trim().toLowerCase() ==
+                    widget.food.name.trim().toLowerCase())) {
           return item;
         }
       }
@@ -86,8 +82,35 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
     final item = _flashSaleItem;
     if (item == null) return null;
     for (final campaign in widget.flashSales) {
-      if (campaign.items.any((i) => i.foodId == widget.food.id)) {
+      if (campaign.items.any(
+        (i) =>
+            (i.foodId > 0 && i.foodId == widget.food.id) ||
+            i.id == item.id ||
+            (widget.food.name.isNotEmpty &&
+                i.name.trim().toLowerCase() ==
+                    widget.food.name.trim().toLowerCase()),
+      )) {
         return campaign;
+      }
+    }
+    return null;
+  }
+
+  bool get _isFlashSaleActive {
+    final campaign = _flashCampaign;
+    if (campaign != null) {
+      if (_remainingDuration <= Duration.zero) {
+        return false;
+      }
+      return campaign.isCurrentlyActive;
+    }
+    return widget.flashSales.any((s) => s.isCurrentlyActive);
+  }
+
+  FlashSaleItem? _getFlashSaleForRec(int foodId) {
+    for (final campaign in widget.flashSales) {
+      for (final item in campaign.items) {
+        if (item.foodId == foodId) return item;
       }
     }
     return null;
@@ -147,18 +170,15 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
         name.contains('pepsi');
   }
 
-  int get _optionsTotal {
-    int total = 0;
-    for (final opt in _selectedOptions) {
-      total += _webOptions[opt] ?? 0;
-    }
-    return total;
-  }
-
   int get _currentUnitPrice {
     final sale = _flashSaleItem;
-    final basePrice = sale != null ? sale.salePrice : widget.food.price;
-    return basePrice + _optionsTotal;
+    if (sale != null &&
+        sale.salePrice > 0 &&
+        sale.salePrice <
+            (widget.food.price > 0 ? widget.food.price : sale.originalPrice)) {
+      return sale.salePrice;
+    }
+    return widget.food.price;
   }
 
   int get _totalPrice => _currentUnitPrice * _quantity;
@@ -173,15 +193,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
   }
 
   void _submitAddToCart() {
-    final noteParts = <String>[];
-    if (_selectedOptions.isNotEmpty) {
-      noteParts.add('Tùy chọn: ${_selectedOptions.join(", ")}');
-    }
-    if (_notesController.text.trim().isNotEmpty) {
-      noteParts.add(_notesController.text.trim());
-    }
-
-    final finalNotes = noteParts.join(' | ');
+    final finalNotes = _notesController.text.trim();
     widget.onAddToCart(widget.food.name, _quantity, finalNotes, _totalPrice);
     Navigator.of(context).pop();
 
@@ -240,12 +252,14 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
   Widget build(BuildContext context) {
     final food = widget.food;
     final sale = _flashSaleItem;
-    final isSale = sale != null;
+    final isExplicitSale = sale != null && _remainingDuration > Duration.zero;
 
-    final baseOriginalPrice = sale != null
-        ? sale.originalPrice
+    final baseOriginalPrice = isExplicitSale
+        ? (sale.originalPrice > 0
+              ? sale.originalPrice
+              : (food.oldPrice ?? food.price))
         : (food.oldPrice ?? food.price);
-    final currentPrice = sale != null ? sale.salePrice : food.price;
+    final currentPrice = _currentUnitPrice;
     final hasDiscount = baseOriginalPrice > currentPrice;
     final discountPercent = hasDiscount
         ? (((baseOriginalPrice - currentPrice) / baseOriginalPrice) * 100)
@@ -253,6 +267,10 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
         : 0;
     final savings = hasDiscount ? (baseOriginalPrice - currentPrice) : 0;
     final isDrink = _isDrink(food);
+
+    // Khi đến thời gian Flash Sale:
+    // Tất cả các món sale (món trong Flash Sale HOẶC có giảm giá) đều kích hoạt hiệu ứng Neon Laser!
+    final isSale = isExplicitSale || (hasDiscount && _isFlashSaleActive);
 
     return Scaffold(
       backgroundColor: const Color(0xFFFFFBF8),
@@ -336,7 +354,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
 
                 // 7. Flash Sale Box Banner (nếu đang Flash Sale)
                 if (isSale) ...[
-                  _buildFlashSaleBanner(sale, discountPercent, savings),
+                  _buildFlashSaleBanner(sale!, discountPercent, savings),
                   const SizedBox(height: 14),
                 ],
 
@@ -353,11 +371,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
                 _buildDescriptionSection(food, isDrink),
                 const SizedBox(height: 20),
 
-                // 10. Tùy chọn thêm (Options chuẩn Web)
-                _buildWebOptionsSection(),
-                const SizedBox(height: 18),
-
-                // 11. Ghi chú cho nhà bếp (Optional)
+                // 10. Ghi chú cho nhà bếp (Optional)
                 _buildNotesSection(),
                 const SizedBox(height: 24),
 
@@ -436,50 +450,37 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
 
   /// 2. Image Gallery với Neon Flash Sale Aura
   Widget _buildHeroImage(FoodItem food, bool isSale) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: isSale
-            ? [
-                BoxShadow(
-                  color: const Color(0xFF00F0FF).withValues(alpha: 0.35),
-                  blurRadius: 24,
-                  spreadRadius: 2,
-                ),
-                BoxShadow(
-                  color: const Color(0xFFFF007F).withValues(alpha: 0.32),
-                  blurRadius: 28,
-                  spreadRadius: 1,
-                ),
-              ]
-            : [
-                BoxShadow(
-                  color: const Color(0xFF502A18).withValues(alpha: 0.12),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-      ),
+    return NeonSpinBorder(
+      borderRadius: 16,
+      borderWidth: 3.5,
+      glow: true,
+      enabled: isSale,
       child: Container(
-        padding: isSale ? const EdgeInsets.all(3.5) : EdgeInsets.zero,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: isSale
-              ? const LinearGradient(
-                  colors: [
-                    Color(0xFF00F0FF),
-                    Color(0xFF9D00FF),
-                    Color(0xFFFF007F),
-                    Color(0xFFFFEA00),
-                    Color(0xFF00FF88),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
+          boxShadow: isSale
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF00F0FF).withValues(alpha: 0.25),
+                    blurRadius: 20,
+                    spreadRadius: 1,
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFFFF007F).withValues(alpha: 0.25),
+                    blurRadius: 24,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: const Color(0xFF502A18).withValues(alpha: 0.12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(isSale ? 13 : 16),
+          borderRadius: BorderRadius.circular(16),
           child: Stack(
             children: [
               AspectRatio(
@@ -913,6 +914,10 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
     bool hasDiscount,
     bool isSale,
   ) {
+    final discountPercent = hasDiscount && originalPrice > 0
+        ? (((originalPrice - currentPrice) / originalPrice) * 100).round()
+        : 0;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -923,8 +928,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
             : null,
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
             '${_formatPrice(currentPrice)}đ',
@@ -942,6 +946,24 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
                 fontSize: 16,
                 color: Color(0xFF9E9E9E),
                 decoration: TextDecoration.lineThrough,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSale
+                    ? const Color(0xFFFF0055)
+                    : const Color(0xFFFF5722),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '-$discountPercent%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
           ],
@@ -1022,97 +1044,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
     );
   }
 
-  /// 10. Tùy chọn thêm (Options chuẩn Web)
-  Widget _buildWebOptionsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Tùy chọn thêm',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w900,
-            color: Color(0xFF201814),
-          ),
-        ),
-        const SizedBox(height: 10),
-        ..._webOptions.entries.map((entry) {
-          final title = entry.key;
-          final price = entry.value;
-          final isSelected = _selectedOptions.contains(title);
-
-          return InkWell(
-            onTap: () {
-              setState(() {
-                if (isSelected) {
-                  _selectedOptions.remove(title);
-                } else {
-                  _selectedOptions.add(title);
-                }
-              });
-            },
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? const Color(0xFFFFF4ED)
-                    : const Color(0xFFFFF8F3),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: isSelected
-                      ? const Color(0xFFFF7A1A)
-                      : const Color(0xFFF0DFD5),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        isSelected
-                            ? Icons.check_box_rounded
-                            : Icons.check_box_outline_blank_rounded,
-                        color: isSelected
-                            ? const Color(0xFFFF7A1A)
-                            : const Color(0xFFAAAAAA),
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: isSelected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: const Color(0xFF3C2D26),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    price > 0 ? '+${_formatPrice(price)}đ' : 'Miễn phí',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      color: isSelected
-                          ? const Color(0xFFA64008)
-                          : const Color(0xFF8A6F62),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ],
-    );
-  }
-
-  /// 11. Notes Section
+  /// 10. Notes Section
   Widget _buildNotesSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1214,6 +1146,205 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
   }
 
   Widget _buildSuggestionCard(FoodItem rec) {
+    final recSale = _getFlashSaleForRec(rec.id);
+    final isExplicitSale = recSale != null;
+    final effectivePrice = isExplicitSale ? recSale.salePrice : rec.price;
+    final originalPrice = isExplicitSale
+        ? (recSale.originalPrice > 0 ? recSale.originalPrice : rec.price)
+        : rec.oldPrice;
+    final hasDiscount = originalPrice != null && originalPrice > effectivePrice;
+    final showNeonSpin = _isFlashSaleActive && (isExplicitSale || hasDiscount);
+
+    final cardContainer = Container(
+      width: 145,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: showNeonSpin ? Colors.transparent : const Color(0xFFF0DFD5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: showNeonSpin
+                ? const Color(0xFFFF007F).withValues(alpha: 0.15)
+                : const Color(0xFF502A18).withValues(alpha: 0.05),
+            blurRadius: showNeonSpin ? 10 : 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(9),
+                ),
+                child: AspectRatio(
+                  aspectRatio: 1 / 0.72,
+                  child: AppImage(
+                    source: rec.imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      color: const Color(0xFFFFF3EB),
+                      child: const Center(
+                        child: Icon(
+                          Icons.restaurant,
+                          color: Color(0xFFFF7A1A),
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (showNeonSpin)
+                Positioned(
+                  top: 5,
+                  left: 5,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF007F), Color(0xFFFF5500)],
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      '⚡ SALE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  rec.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF201814),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      color: Color(0xFFFF8A00),
+                      size: 13,
+                    ),
+                    Text(
+                      ' ${rec.rating > 0 ? rec.rating.toStringAsFixed(1) : "5.0"}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Còn ${rec.stockQuantity}',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        color: Color(0xFF7D6255),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (hasDiscount)
+                          Text(
+                            '${_formatPrice(originalPrice)}đ',
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: Color(0xFF7D6255),
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                        Text(
+                          '${_formatPrice(effectivePrice)}đ',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w900,
+                            color: showNeonSpin
+                                ? const Color(0xFFE53935)
+                                : const Color(0xFFFF5722),
+                          ),
+                        ),
+                      ],
+                    ),
+                    InkWell(
+                      onTap: () {
+                        widget.onAddToCart(rec.name, 1, '', effectivePrice);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Đã thêm "${rec.name}" vào giỏ!'),
+                            duration: const Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: showNeonSpin
+                              ? const Color(0xFFFF5500)
+                              : const Color(0xFFFF7A1A),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Text(
+                          '+ Thêm',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final cardContent = showNeonSpin
+        ? NeonSpinBorder(
+            borderRadius: 10,
+            borderWidth: 2.0,
+            glow: true,
+            child: cardContainer,
+          )
+        : cardContainer;
+
     return InkWell(
       onTap: () {
         Navigator.of(context).pushReplacement(
@@ -1230,134 +1361,7 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
         );
       },
       borderRadius: BorderRadius.circular(10),
-      child: Container(
-        width: 145,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFF0DFD5)),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF502A18).withValues(alpha: 0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(9),
-              ),
-              child: AspectRatio(
-                aspectRatio: 1 / 0.72,
-                child: AppImage(
-                  source: rec.imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
-                    color: const Color(0xFFFFF3EB),
-                    child: const Center(
-                      child: Icon(
-                        Icons.restaurant,
-                        color: Color(0xFFFF7A1A),
-                        size: 28,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    rec.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF201814),
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.star_rounded,
-                        color: Color(0xFFFF8A00),
-                        size: 13,
-                      ),
-                      Text(
-                        ' ${rec.rating > 0 ? rec.rating.toStringAsFixed(1) : "5.0"}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        'Còn ${rec.stockQuantity}',
-                        style: const TextStyle(
-                          fontSize: 10.5,
-                          color: Color(0xFF7D6255),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${_formatPrice(rec.price)}đ',
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFFFF5722),
-                        ),
-                      ),
-                      InkWell(
-                        onTap: () {
-                          widget.onAddToCart(rec.name, 1, '', rec.price);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Đã thêm "${rec.name}" vào giỏ!'),
-                              duration: const Duration(seconds: 1),
-                            ),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF7A1A),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: const Text(
-                            '+ Thêm',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: cardContent,
     );
   }
 

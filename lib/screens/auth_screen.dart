@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../core/app_theme.dart';
 import '../models/auth_session.dart';
@@ -107,6 +108,238 @@ class _AuthScreenState extends State<AuthScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+      final account = await googleSignIn.signIn();
+      if (account == null) {
+        setState(() => _submitting = false);
+        return;
+      }
+
+      final auth = await account.authentication;
+      final token = auth.accessToken ?? auth.idToken;
+      if (token == null || token.isEmpty) {
+        throw const ApiException('Không lấy được mã xác thực Google');
+      }
+
+      final result = await widget.authService.loginWithGoogle(token);
+      if (result['requiresAccountSetup'] == true) {
+        if (mounted) {
+          _showSocialSetupModal(
+            provider: 'google',
+            accessToken: token,
+            defaultEmail: result['providerEmail']?.toString() ?? account.email,
+            defaultFullname:
+                result['fullname']?.toString() ?? account.displayName ?? '',
+          );
+        }
+      } else if (result['session'] is AuthSession) {
+        if (mounted) {
+          widget.onAuthenticated(result['session'] as AuthSession);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        final err = e.toString();
+        if (err.contains('MissingPluginException')) {
+          setState(() {
+            _error = 'Vui lòng khởi động lại app ("q" rồi "flutter run") để kích hoạt Google Sign-In.';
+          });
+        } else {
+          setState(() {
+            _error = err
+                .replaceFirst('ApiException: ', '')
+                .replaceFirst('Exception: ', '');
+          });
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  void _showSocialSetupModal({
+    required String provider,
+    required String accessToken,
+    required String defaultEmail,
+    required String defaultFullname,
+  }) {
+    final usernameCtrl = TextEditingController(
+      text: defaultEmail.contains('@') ? defaultEmail.split('@')[0] : '',
+    );
+    final fullnameCtrl = TextEditingController(text: defaultFullname);
+    final passwordCtrl = TextEditingController();
+    bool submitting = false;
+    String? localError;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (modalCtx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Hoàn tất tài khoản Google',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tài khoản: $defaultEmail\nVui lòng tạo username và mật khẩu để hoàn tất liên kết:',
+                  style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+                if (localError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    localError!,
+                    style: const TextStyle(color: Colors.red, fontSize: 13),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: usernameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: fullnameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Họ và tên',
+                    prefixIcon: Icon(Icons.badge_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Mật khẩu',
+                    prefixIcon: Icon(Icons.lock_outline),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: submitting
+                        ? null
+                        : () async {
+                            final u = usernameCtrl.text.trim();
+                            final p = passwordCtrl.text.trim();
+                            final fn = fullnameCtrl.text.trim();
+                            if (u.length < 3) {
+                              setModalState(
+                                () => localError = 'Username tối thiểu 3 ký tự',
+                              );
+                              return;
+                            }
+                            if (p.length < 6) {
+                              setModalState(
+                                () => localError = 'Mật khẩu tối thiểu 6 ký tự',
+                              );
+                              return;
+                            }
+                            setModalState(() {
+                              submitting = true;
+                              localError = null;
+                            });
+                            try {
+                              final session = await widget.authService
+                                  .completeSocialSetup(
+                                    provider: provider,
+                                    accessToken: accessToken,
+                                    username: u,
+                                    fullname: fn,
+                                    password: p,
+                                  );
+                              if (mounted && modalCtx.mounted) {
+                                Navigator.pop(modalCtx);
+                                widget.onAuthenticated(session);
+                              }
+                            } catch (e) {
+                              if (!modalCtx.mounted) return;
+                              setModalState(() {
+                                submitting = false;
+                                localError = e
+                                    .toString()
+                                    .replaceFirst('ApiException: ', '')
+                                    .replaceFirst('Exception: ', '');
+                              });
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: submitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            'Kích hoạt tài khoản',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showSocialNotice(String provider) {
@@ -487,7 +720,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 iconColor: const Color(0xFFEA4335),
                 symbol: 'G',
                 label: 'Google',
-                onPressed: () => _showSocialNotice('Google'),
+                onPressed: _submitting ? null : () => _handleGoogleSignIn(),
               ),
             ),
             const SizedBox(width: 12),
@@ -972,7 +1205,7 @@ class _SocialButton extends StatelessWidget {
   final String symbol;
   final String label;
   final Color iconColor;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool isSquare;
 
   @override

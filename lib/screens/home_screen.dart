@@ -1,16 +1,21 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
+import '../models/auth_session.dart';
 import '../models/combo_item.dart';
 import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
 import '../models/home_content.dart';
+import '../widgets/announcement_marquee_ticker.dart';
 import '../widgets/app_image.dart';
 import '../widgets/food_card.dart';
+import '../widgets/neon_spin_border.dart';
 import '../widgets/skeleton_loader.dart';
+import 'category_screen.dart';
 import 'food_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -32,6 +37,8 @@ class HomeScreen extends StatefulWidget {
     required this.onAddToCart,
     required this.onToggleFavorite,
     this.onMarkAnnouncementsRead,
+    this.session,
+    this.onSelectTab,
   });
 
   final int cartCount;
@@ -50,60 +57,111 @@ class HomeScreen extends StatefulWidget {
   final ValueChanged<String> onAddToCart;
   final ValueChanged<int> onToggleFavorite;
   final Future<void> Function(List<int>)? onMarkAnnouncementsRead;
+  final AuthSession? session;
+  final ValueChanged<int>? onSelectTab;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final Set<String> _expandedDrawerCategories = {'Đồ ăn'};
   String _selectedCategory = 'Tất cả';
   String _query = '';
+  static bool _hasShownAdPopup = false;
   final TextEditingController _searchController = TextEditingController();
-  final PageController _comboPageController = PageController();
-  int _currentComboPage = 0;
+  final PageController _announcementPageController = PageController();
   int _selectedReviewRating = 0; // 0 for All, or 5, 4, 3
+  List<FoodItem> _topBestSellers = const [];
 
   Timer? _timer;
-  Timer? _comboTimer;
-  Duration _remainingTime = Duration.zero;
+  Timer? _announcementTimer;
+  final ValueNotifier<Duration> _remainingTimeNotifier =
+      ValueNotifier<Duration>(Duration.zero);
   late final AnimationController _flameAnimController;
+  late final AnimationController _bellAnimController;
+  late final Animation<double> _bellRotation;
 
   @override
   void initState() {
     super.initState();
+    _updateBestSellers();
     _flameAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
-    _initCountdown();
-    _startComboAutoPlay();
-  }
 
-  void _startComboAutoPlay() {
-    _comboTimer?.cancel();
-    _comboTimer = Timer.periodic(const Duration(milliseconds: 4000), (timer) {
-      if (!mounted || !_comboPageController.hasClients) return;
-      final count = widget.combos.isNotEmpty ? widget.combos.length : 3;
-      if (count <= 1) return;
-      final next = (_currentComboPage + 1) % count;
-      _comboPageController.animateToPage(
-        next,
-        duration: const Duration(milliseconds: 550),
-        curve: Curves.easeInOutCubic,
-      );
-    });
+    _bellAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+
+    _bellRotation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 0.0,
+          end: -0.09,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 1,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: -0.09,
+          end: 0.09,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 2,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 0.09,
+          end: -0.06,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 2,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: -0.06,
+          end: 0.04,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 1.5,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: 0.04,
+          end: 0.0,
+        ).chain(CurveTween(curve: Curves.easeInOut)),
+        weight: 1.5,
+      ),
+      TweenSequenceItem(tween: ConstantTween(0.0), weight: 14),
+    ]).animate(_bellAnimController);
+
+    _initCountdown();
+    if (widget.advertisements.isNotEmpty) {
+      _checkAndShowAdPopup();
+    }
   }
 
   @override
   void didUpdateWidget(HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.foods != widget.foods) {
+      _updateBestSellers();
+    }
     if (oldWidget.flashSales != widget.flashSales) {
       _initCountdown();
     }
-    if (oldWidget.combos != widget.combos) {
-      _startComboAutoPlay();
+    if (oldWidget.advertisements != widget.advertisements &&
+        widget.advertisements.isNotEmpty &&
+        !_hasShownAdPopup) {
+      _checkAndShowAdPopup();
     }
+  }
+
+  void _updateBestSellers() {
+    final bestSellers = widget.foods.where((food) => food.sold > 0).toList()
+      ..sort((a, b) => b.sold.compareTo(a.sold));
+    _topBestSellers = bestSellers.take(5).toList();
   }
 
   void _initCountdown() {
@@ -117,31 +175,62 @@ class _HomeScreenState extends State<HomeScreen>
         final endTime = DateTime.parse(activeSale.endsAt!.replaceAll(' ', 'T'));
         final now = DateTime.now();
         final diff = endTime.difference(now);
-        _remainingTime = diff.isNegative ? Duration.zero : diff;
+        _remainingTimeNotifier.value = diff.isNegative ? Duration.zero : diff;
       } catch (_) {
-        _remainingTime = const Duration(hours: 3, minutes: 45);
+        _remainingTimeNotifier.value = const Duration(hours: 3, minutes: 45);
       }
     } else {
-      _remainingTime = const Duration(hours: 3, minutes: 45);
+      _remainingTimeNotifier.value = const Duration(hours: 3, minutes: 45);
     }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
-      if (_remainingTime.inSeconds > 0) {
-        setState(() {
-          _remainingTime = _remainingTime - const Duration(seconds: 1);
-        });
+      if (_remainingTimeNotifier.value.inSeconds > 0) {
+        _remainingTimeNotifier.value =
+            _remainingTimeNotifier.value - const Duration(seconds: 1);
+        if (_remainingTimeNotifier.value.inSeconds == 0) {
+          setState(() {});
+        }
       }
     });
+  }
+
+  bool get _isFlashSaleTimeActive {
+    final activeSale = widget.flashSales
+        .where((s) => s.items.isNotEmpty)
+        .firstOrNull;
+    if (activeSale == null) return false;
+
+    final now = DateTime.now();
+    if (activeSale.startsAt != null && activeSale.startsAt!.isNotEmpty) {
+      try {
+        final startTime = DateTime.parse(
+          activeSale.startsAt!.replaceAll(' ', 'T'),
+        );
+        if (now.isBefore(startTime)) return false;
+      } catch (_) {}
+    }
+    if (activeSale.endsAt != null && activeSale.endsAt!.isNotEmpty) {
+      try {
+        final endTime = DateTime.parse(activeSale.endsAt!.replaceAll(' ', 'T'));
+        if (now.isAfter(endTime)) return false;
+      } catch (_) {}
+    }
+    if (_remainingTimeNotifier.value.inSeconds <= 0) {
+      return false;
+    }
+    return true;
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _comboTimer?.cancel();
+    _announcementTimer?.cancel();
+    _remainingTimeNotifier.dispose();
     _flameAnimController.dispose();
+    _bellAnimController.dispose();
     _searchController.dispose();
-    _comboPageController.dispose();
+    _announcementPageController.dispose();
     super.dispose();
   }
 
@@ -176,9 +265,43 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  void _openCategoryScreen(
+    String categoryName, {
+    CategorySortOption initialSort = CategorySortOption.popular,
+    bool initialOnlySale = false,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CategoryScreen(
+          categoryName: categoryName,
+          allFoods: widget.foods,
+          categories: widget.categories,
+          flashSales: widget.flashSales,
+          favorites: widget.favorites,
+          cartCount: widget.cartCount,
+          onAddToCart: widget.onAddToCart,
+          onToggleFavorite: widget.onToggleFavorite,
+          initialSort: initialSort,
+          initialOnlySale: initialOnlySale,
+        ),
+      ),
+    );
+  }
+
+  FlashSaleItem? _getFlashSale(int foodId) {
+    for (final campaign in widget.flashSales) {
+      for (final item in campaign.items) {
+        if (item.foodId == foodId) return item;
+      }
+    }
+    return null;
+  }
+
   FoodCard _buildFoodCard(FoodItem food) {
     return FoodCard(
       food: food,
+      flashSale: _getFlashSale(food.id),
+      isFlashSaleTimeActive: _isFlashSaleTimeActive,
       isFavorite: widget.favorites.contains(food.id),
       onFavorite: () => widget.onToggleFavorite(food.id),
       onAdd: () => widget.onAddToCart(food.name),
@@ -213,7 +336,7 @@ class _HomeScreenState extends State<HomeScreen>
               kicker: 'THỰC ĐƠN',
               title: name,
               action: 'Xem tất cả',
-              onAction: () => setState(() => _selectedCategory = name),
+              onAction: () => _openCategoryScreen(name),
             ),
             GridView.builder(
               shrinkWrap: true,
@@ -235,120 +358,236 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildAnnouncementTicker() {
+    final list = widget.announcements;
+    if (list.isEmpty) return const SizedBox.shrink();
+
     return Container(
-      height: 40,
+      height: 36,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF2B1C16),
+        color: const Color(0xFF241611),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF4A2A1E)),
       ),
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        scrollDirection: Axis.horizontal,
-        itemCount: widget.announcements.length,
-        separatorBuilder: (_, _) => const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12),
-          child: Center(
-            child: Text('•', style: TextStyle(color: AppColors.orange)),
-          ),
-        ),
-        itemBuilder: (context, index) {
-          final item = widget.announcements[index];
-          return InkWell(
-            onTap: _showAnnouncements,
-            child: Center(
-              child: Row(
-                children: [
-                  if (!item.isRead) ...[
-                    const Icon(
-                      Icons.fiber_new,
-                      color: AppColors.orange,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 5),
-                  ],
-                  Text(
-                    item.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: ScaleTransition(
+              scale: Tween<double>(
+                begin: 0.88,
+                end: 1.14,
+              ).animate(_flameAnimController),
+              child: const Text('📢', style: TextStyle(fontSize: 14)),
             ),
-          );
-        },
+          ),
+          Container(width: 1, height: 16, color: const Color(0xFF4A2A1E)),
+          Expanded(
+            child: AnnouncementMarqueeTicker(
+              announcements: list,
+              onTap: _showAnnouncements,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildAdvertisements() {
-    return SizedBox(
-      height: 112,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        scrollDirection: Axis.horizontal,
-        itemCount: widget.advertisements.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          final advertisement = widget.advertisements[index];
-          return InkWell(
-            onTap: () {
-              final foodId = advertisement.linkedFoodId;
-              final food = widget.foods
-                  .where((item) => item.id == foodId)
-                  .firstOrNull;
-              if (food != null) _openFoodDetail(food);
-            },
-            borderRadius: BorderRadius.circular(10),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: SizedBox(
-                width: 230,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    AppImage(
-                      source: advertisement.image,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const ColoredBox(
-                        color: AppColors.soft,
-                        child: Icon(Icons.campaign, color: AppColors.orange),
-                      ),
-                    ),
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Color(0xAA1D100B)],
+  void _checkAndShowAdPopup() {
+    if (_hasShownAdPopup) return;
+    if (widget.advertisements.isEmpty) return;
+    _hasShownAdPopup = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showAdvertisementPopup();
+    });
+  }
+
+  Future<void> _showAdvertisementPopup() async {
+    if (widget.advertisements.isEmpty || !mounted) return;
+
+    final ads = widget.advertisements;
+    int currentAdIndex = 0;
+    final pageController = PageController();
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss Ad',
+      barrierColor: Colors.black.withValues(alpha: 0.7),
+      transitionDuration: const Duration(milliseconds: 280),
+      transitionBuilder: (dialogCtx, anim1, anim2, child) {
+        return Transform.scale(
+          scale: Curves.easeOutBack.transform(anim1.value),
+          child: FadeTransition(opacity: anim1, child: child),
+        );
+      },
+      pageBuilder: (dialogContext, _, _) {
+        final screen = MediaQuery.of(dialogContext).size;
+        // Mở rộng modal: 94% chiều rộng, 78% chiều cao màn hình
+        // để ảnh quảng cáo hiển thị rõ nét và lớn nhất có thể
+        final modalWidth = screen.width * 0.94;
+        final modalHeight = screen.height * 0.78;
+
+        return BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: Center(
+            child: StatefulBuilder(
+              builder: (ctx, setModalState) {
+                final ad = ads[currentAdIndex];
+                final foodId = ad.linkedFoodId;
+                final linkedFood = foodId != null
+                    ? widget.foods.where((f) => f.id == foodId).firstOrNull
+                    : null;
+
+                void onImageTap() {
+                  Navigator.of(dialogContext).pop();
+                  if (linkedFood != null) {
+                    _openFoodDetail(linkedFood);
+                  } else if (widget.foods.isNotEmpty) {
+                    final matched = widget.foods
+                        .where(
+                          (f) =>
+                              ad.title.toLowerCase().contains(
+                                f.name.toLowerCase(),
+                              ) ||
+                              f.name.toLowerCase().contains(
+                                ad.title.toLowerCase(),
+                              ),
+                        )
+                        .firstOrNull;
+                    if (matched != null) {
+                      _openFoodDetail(matched);
+                    }
+                  }
+                }
+
+                return Material(
+                  color: Colors.transparent,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Full poster image container with close 'X' button on corner
+                      SizedBox(
+                        width: modalWidth,
+                        height: modalHeight,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            // Full Poster Image (Tap to open detail page)
+                            Positioned.fill(
+                              child: GestureDetector(
+                                onTap: onImageTap,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(18),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.55,
+                                        ),
+                                        blurRadius: 28,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: ads.length > 1
+                                      ? PageView.builder(
+                                          controller: pageController,
+                                          itemCount: ads.length,
+                                          onPageChanged: (idx) {
+                                            setModalState(
+                                              () => currentAdIndex = idx,
+                                            );
+                                          },
+                                          itemBuilder: (context, idx) {
+                                            final currentAd = ads[idx];
+                                            return AppImage(
+                                              source: currentAd.image,
+                                              // BoxFit.cover: lấp đầy khung, không để viền trắng
+                                              fit: BoxFit.cover,
+                                            );
+                                          },
+                                        )
+                                      : AppImage(
+                                          source: ad.image,
+                                          fit: BoxFit.cover,
+                                        ),
+                                ),
+                              ),
+                            ),
+
+                            // Close 'X' button on top-right corner
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: GestureDetector(
+                                onTap: () => Navigator.of(dialogContext).pop(),
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.65),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.45,
+                                      ),
+                                      width: 1.2,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.35,
+                                        ),
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.close_rounded,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    Positioned(
-                      left: 10,
-                      right: 10,
-                      bottom: 8,
-                      child: Text(
-                        advertisement.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
+
+                      // Dots indicator (only if more than 1 ad)
+                      if (ads.length > 1) ...[
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(ads.length, (idx) {
+                            final isActive = idx == currentAdIndex;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              width: isActive ? 16 : 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.white
+                                    : Colors.white.withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                            );
+                          }),
                         ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -451,19 +690,225 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  static String _normalize(String input) {
+    var str = input.toLowerCase().trim();
+    const vietnameseMap = {
+      'à': 'a',
+      'á': 'a',
+      'ả': 'a',
+      'ã': 'a',
+      'ạ': 'a',
+      'ă': 'a',
+      'ằ': 'a',
+      'ắ': 'a',
+      'ẳ': 'a',
+      'ẵ': 'a',
+      'ặ': 'a',
+      'â': 'a',
+      'ầ': 'a',
+      'ấ': 'a',
+      'ẩ': 'a',
+      'ẫ': 'a',
+      'ậ': 'a',
+      'è': 'e',
+      'é': 'e',
+      'ẻ': 'e',
+      'ẽ': 'e',
+      'ẹ': 'e',
+      'ê': 'e',
+      'ề': 'e',
+      'ế': 'e',
+      'ể': 'e',
+      'ễ': 'e',
+      'ệ': 'e',
+      'ì': 'i',
+      'í': 'i',
+      'ỉ': 'i',
+      'ĩ': 'i',
+      'ị': 'i',
+      'ò': 'o',
+      'ó': 'o',
+      'ỏ': 'o',
+      'õ': 'o',
+      'ọ': 'o',
+      'ô': 'o',
+      'ồ': 'o',
+      'ố': 'o',
+      'ổ': 'o',
+      'ỗ': 'o',
+      'ộ': 'o',
+      'ơ': 'o',
+      'ờ': 'o',
+      'ớ': 'o',
+      'ở': 'o',
+      'ỡ': 'o',
+      'ợ': 'o',
+      'ù': 'u',
+      'ú': 'u',
+      'ủ': 'u',
+      'ũ': 'u',
+      'ụ': 'u',
+      'ư': 'u',
+      'ừ': 'u',
+      'ứ': 'u',
+      'ử': 'u',
+      'ữ': 'u',
+      'ự': 'u',
+      'ỳ': 'y',
+      'ý': 'y',
+      'ỷ': 'y',
+      'ỹ': 'y',
+      'ỵ': 'y',
+      'đ': 'd',
+    };
+    for (final entry in vietnameseMap.entries) {
+      str = str.replaceAll(entry.key, entry.value);
+    }
+    return str;
+  }
+
+  static bool _isBanhMi(FoodItem food) {
+    final normName = _normalize(food.name);
+    final normCat = _normalize(food.categoryName ?? food.category);
+    final slug = (food.categorySlug ?? '').toLowerCase().trim();
+    return slug == 'banh-mi' ||
+        slug == 'banhmi' ||
+        normName.contains('banh mi') ||
+        normName.contains('banh my') ||
+        normCat.contains('banh mi') ||
+        normCat.contains('banh my');
+  }
+
+  bool _foodMatchesCategory(FoodItem food, String selectedCategory) {
+    if (selectedCategory == 'Tất cả') return true;
+
+    final normTarget = _normalize(selectedCategory);
+    final targetSlug = normTarget.replaceAll(' ', '-');
+
+    final isTargetNoodle =
+        normTarget == 'mi' ||
+        normTarget == 'my' ||
+        normTarget == 'mon mi' ||
+        targetSlug == 'mi';
+
+    if (isTargetNoodle) {
+      if (_isBanhMi(food)) return false;
+
+      final catObj = widget.categories
+          .where((c) => c.slug == 'mi' || _normalize(c.name) == 'mi')
+          .firstOrNull;
+      if (catObj != null) {
+        if (food.categoryId == catObj.id ||
+            (food.categorySlug != null &&
+                food.categorySlug!.toLowerCase() ==
+                    catObj.slug.toLowerCase())) {
+          return true;
+        }
+      }
+
+      if (food.categorySlug?.toLowerCase() == 'mi') return true;
+      if (_normalize(food.categoryName ?? '') == 'mi') return true;
+      if (_normalize(food.category) == 'mi') return true;
+
+      final noodleRegex = RegExp(
+        r'(?<!banh\s)\b(mi|my)\b',
+        caseSensitive: false,
+      );
+      return noodleRegex.hasMatch(_normalize(food.name)) ||
+          noodleRegex.hasMatch(_normalize(food.categoryName ?? food.category));
+    }
+
+    final catObj = widget.categories
+        .where((c) => c.slug == targetSlug || _normalize(c.name) == normTarget)
+        .firstOrNull;
+
+    if (catObj != null) {
+      if (food.categoryId == catObj.id ||
+          (food.categorySlug != null &&
+              food.categorySlug!.toLowerCase() == catObj.slug.toLowerCase())) {
+        return true;
+      }
+    }
+
+    final normFoodCat = _normalize(food.categoryName ?? food.category);
+    final foodSlug = (food.categorySlug ?? '').toLowerCase();
+
+    if (foodSlug == targetSlug) return true;
+    if (normFoodCat == normTarget) return true;
+    if (normFoodCat.contains(normTarget)) return true;
+
+    return false;
+  }
+
+  bool _foodMatchesSearch(FoodItem food, String query) {
+    final q = query.trim();
+    if (q.isEmpty) return true;
+
+    final normQ = _normalize(q);
+    final normName = _normalize(food.name);
+    final normDesc = _normalize(food.description ?? '');
+    final normCat = _normalize(food.categoryName ?? food.category);
+
+    if (normQ == 'mi' || normQ == 'my' || normQ == 'mon mi') {
+      if (_isBanhMi(food)) return false;
+      final noodleRegex = RegExp(
+        r'(?<!banh\s)\b(mi|my)\b',
+        caseSensitive: false,
+      );
+      return noodleRegex.hasMatch(normName) ||
+          noodleRegex.hasMatch(normCat) ||
+          noodleRegex.hasMatch(normDesc) ||
+          food.categorySlug == 'mi';
+    }
+
+    return normName.contains(normQ) ||
+        normDesc.contains(normQ) ||
+        normCat.contains(normQ);
+  }
+
+  IconData _getCategoryIcon(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('cơm')) return Icons.rice_bowl_rounded;
+    if (lower.contains('phở')) return Icons.ramen_dining_rounded;
+    if (lower.contains('mì') || lower.contains('bún')) {
+      return Icons.soup_kitchen_rounded;
+    }
+    if (lower.contains('trà')) return Icons.emoji_food_beverage_rounded;
+    if (lower.contains('cà phê') || lower.contains('cafe')) {
+      return Icons.coffee_rounded;
+    }
+    if (lower.contains('nước ép') || lower.contains('sinh tố')) {
+      return Icons.blender_rounded;
+    }
+    if (lower.contains('nước') ||
+        lower.contains('uống') ||
+        lower.contains('chai')) {
+      return Icons.local_drink_rounded;
+    }
+    if (lower.contains('burger')) return Icons.lunch_dining_rounded;
+    if (lower.contains('pizza')) return Icons.local_pizza_rounded;
+    if (lower.contains('gà')) return Icons.kebab_dining_rounded;
+    if (lower.contains('nướng')) return Icons.local_fire_department_rounded;
+    if (lower.contains('kho')) return Icons.dinner_dining_rounded;
+    if (lower.contains('lẩu')) return Icons.set_meal_rounded;
+    if (lower.contains('combo')) return Icons.fastfood_rounded;
+    if (lower.contains('bánh') ||
+        lower.contains('kẹo') ||
+        lower.contains('tráng miệng')) {
+      return Icons.cake_rounded;
+    }
+    return Icons.restaurant_menu_rounded;
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = widget.foods.where((food) {
       final matchesCategory =
-          _selectedCategory == 'Tất cả' || food.category == _selectedCategory;
-      return matchesCategory &&
-          food.name.toLowerCase().contains(_query.trim().toLowerCase());
+          _selectedCategory == 'Tất cả' ||
+          _foodMatchesCategory(food, _selectedCategory);
+      return matchesCategory && _foodMatchesSearch(food, _query);
     }).toList();
 
-    // Top best sellers sorted by sold count
-    final bestSellers = widget.foods.where((food) => food.sold > 0).toList()
-      ..sort((a, b) => b.sold.compareTo(a.sold));
-    final topBestSellers = bestSellers.take(5).toList();
     final showGroupedCatalog =
         _query.trim().isEmpty && _selectedCategory == 'Tất cả';
 
@@ -471,101 +916,127 @@ class _HomeScreenState extends State<HomeScreen>
         .where((s) => s.items.isNotEmpty)
         .firstOrNull;
 
-    return SafeArea(
-      bottom: false,
-      child: CustomScrollView(
-        slivers: [
-          // 1. Header Top
-          SliverToBoxAdapter(child: _buildHeader()),
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: const Color(0xFFFFFBF8),
+      drawer: _buildCategoryDrawer(),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: AppColors.orange,
+          backgroundColor: Colors.white,
+          onRefresh: () async {
+            widget.onRetry();
+            await Future.delayed(const Duration(milliseconds: 600));
+          },
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // 1. Header Top (with Hamburger menu on the left to open drawer)
+              SliverToBoxAdapter(child: _buildHeader()),
 
-          // 2. Search & Filter Bar
-          SliverToBoxAdapter(child: _buildSearch()),
+              // 2. Search & Filter Bar
+              SliverToBoxAdapter(child: _buildSearch()),
 
-          if (_query.isEmpty && widget.announcements.isNotEmpty)
-            SliverToBoxAdapter(child: _buildAnnouncementTicker()),
+              if (_query.isEmpty && widget.announcements.isNotEmpty)
+                SliverToBoxAdapter(child: _buildAnnouncementTicker()),
 
-          if (_query.isEmpty && widget.advertisements.isNotEmpty)
-            SliverToBoxAdapter(child: _buildAdvertisements()),
+              // 3. Real Flash Sale Section (If active in database and within time window)
+              if (activeSale != null &&
+                  activeSale.items.isNotEmpty &&
+                  _isFlashSaleTimeActive &&
+                  _query.isEmpty)
+                SliverToBoxAdapter(child: _buildFlashSaleSection(activeSale)),
 
-          // 3. Real Flash Sale Section (If active in database)
-          if (activeSale != null &&
-              activeSale.items.isNotEmpty &&
-              _query.isEmpty)
-            SliverToBoxAdapter(child: _buildFlashSaleSection(activeSale)),
+              // 4. Combo Carousel Banner (Real from DB)
+              if (_query.isEmpty && widget.combos.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: HomeComboCarousel(
+                    combos: widget.combos,
+                    onAddToCart: widget.onAddToCart,
+                    onTapFood: _openFoodDetail,
+                  ),
+                ),
 
-          // 4. Combo Carousel Banner (Real from DB)
-          if (_query.isEmpty && widget.combos.isNotEmpty)
-            SliverToBoxAdapter(child: _buildComboCarousel()),
+              // 5. Store Commitments
+              if (_query.isEmpty && !widget.loading)
+                SliverToBoxAdapter(child: _buildCommitments()),
 
-          // 5. Store Commitments
-          if (_query.isEmpty) SliverToBoxAdapter(child: _buildCommitments()),
+              // 6. Best Sellers Section (🔥 Bán chạy - sorted from live DB)
+              if (_topBestSellers.isNotEmpty && _query.isEmpty) ...[
+                SliverToBoxAdapter(
+                  child: _buildSectionHeading(
+                    kicker: '🔥 BÁN CHẠY',
+                    title: 'Món ăn bán chạy nhất',
+                    action: 'Xem thêm',
+                    onAction: () {},
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: _buildBestSellersStrip(_topBestSellers),
+                ),
+              ],
 
-          // 6. Categories Header & Bar
-          SliverToBoxAdapter(
-            child: _buildSectionHeading(
-              kicker: 'THỰC ĐƠN',
-              title: 'Danh mục',
-              action: 'Xem tất cả',
-              onAction: () => setState(() => _selectedCategory = 'Tất cả'),
-            ),
+              // Active Category Filter Bar (If filtered by Category from Left Drawer)
+              if (_selectedCategory != 'Tất cả' && _query.isEmpty)
+                SliverToBoxAdapter(
+                  child: _buildActiveCategoryFilterBanner(filtered.length),
+                ),
+
+              // 7. Food Catalog
+              if (widget.loading)
+                const SliverToBoxAdapter(child: HomeScreenSkeleton())
+              else if (widget.loadError != null)
+                SliverToBoxAdapter(child: _buildLoadError())
+              else if (filtered.isEmpty)
+                SliverToBoxAdapter(child: _buildEmptyState())
+              else if (showGroupedCatalog)
+                SliverToBoxAdapter(child: _buildCategoryFoodSections())
+              else ...[
+                SliverToBoxAdapter(
+                  child: _buildSectionHeading(
+                    kicker: 'THỰC ĐƠN',
+                    title: _selectedCategory == 'Tất cả'
+                        ? 'Kết quả tìm kiếm'
+                        : _selectedCategory,
+                    action: _selectedCategory != 'Tất cả'
+                        ? '✕ Bỏ lọc'
+                        : '${filtered.length} món',
+                    onAction: () {
+                      if (_selectedCategory != 'Tất cả') {
+                        setState(() => _selectedCategory = 'Tất cả');
+                      }
+                    },
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                  sliver: SliverGrid(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildFoodCard(filtered[index]),
+                      childCount: filtered.length,
+                    ),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 14,
+                          crossAxisSpacing: 14,
+                          childAspectRatio: 0.65,
+                        ),
+                  ),
+                ),
+              ],
+
+              // 8. Customer Reviews Section (Real from DB or fallback)
+              if (_query.isEmpty && !widget.loading)
+                SliverToBoxAdapter(child: _buildReviewsSection()),
+
+              // 9. Store Footer
+              if (_query.isEmpty && !widget.loading)
+                SliverToBoxAdapter(child: _buildFooterSection()),
+            ],
           ),
-          SliverToBoxAdapter(child: _buildCategories()),
-
-          // 7. Best Sellers Section (🔥 Bán chạy - sorted from live DB)
-          if (topBestSellers.isNotEmpty && _query.isEmpty) ...[
-            SliverToBoxAdapter(
-              child: _buildSectionHeading(
-                kicker: '🔥 BÁN CHẠY',
-                title: 'Món ăn bán chạy nhất',
-                action: 'Xem thêm',
-                onAction: () {},
-              ),
-            ),
-            SliverToBoxAdapter(child: _buildBestSellersStrip(topBestSellers)),
-          ],
-
-          if (widget.loading)
-            const SliverToBoxAdapter(child: HomeScreenSkeleton())
-          else if (widget.loadError != null)
-            SliverToBoxAdapter(child: _buildLoadError())
-          else if (filtered.isEmpty)
-            SliverToBoxAdapter(child: _buildEmptyState())
-          else if (showGroupedCatalog)
-            SliverToBoxAdapter(child: _buildCategoryFoodSections())
-          else ...[
-            SliverToBoxAdapter(
-              child: _buildSectionHeading(
-                kicker: 'THỰC ĐƠN',
-                title: _selectedCategory == 'Tất cả'
-                    ? 'Kết quả tìm kiếm'
-                    : _selectedCategory,
-                action: '${filtered.length} món',
-                onAction: () {},
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-              sliver: SliverGrid(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildFoodCard(filtered[index]),
-                  childCount: filtered.length,
-                ),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 14,
-                  crossAxisSpacing: 14,
-                  childAspectRatio: 0.65,
-                ),
-              ),
-            ),
-          ],
-
-          // 10. Customer Reviews Section (Real from DB or fallback)
-          if (_query.isEmpty) SliverToBoxAdapter(child: _buildReviewsSection()),
-
-          // 11. Store Footer
-          if (_query.isEmpty) SliverToBoxAdapter(child: _buildFooterSection()),
-        ],
+        ),
       ),
     );
   }
@@ -579,9 +1050,40 @@ class _HomeScreenState extends State<HomeScreen>
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 6),
       child: Row(
         children: [
+          // 1. Mobile Menu Button (Hamburger toggle on the left - identical to Web Mobile)
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _scaffoldKey.currentState?.openDrawer(),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7F1),
+                  border: Border.all(color: const Color(0xFFF4E5DC)),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.orange.withValues(alpha: 0.08),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.menu_rounded,
+                  color: AppColors.ink,
+                  size: 22,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // 2. Brand Mark
           Container(
-            width: 46,
-            height: 46,
+            width: 42,
+            height: 42,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
@@ -602,12 +1104,12 @@ class _HomeScreenState extends State<HomeScreen>
               '79',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 20,
+                fontSize: 19,
                 fontWeight: FontWeight.w900,
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -616,7 +1118,7 @@ class _HomeScreenState extends State<HomeScreen>
                   'Bếp 1979',
                   style: TextStyle(
                     color: AppColors.ink,
-                    fontSize: 21,
+                    fontSize: 20,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.3,
                   ),
@@ -625,7 +1127,7 @@ class _HomeScreenState extends State<HomeScreen>
                   'MÓN NGON MỖI NGÀY',
                   style: TextStyle(
                     color: AppColors.orange,
-                    fontSize: 10,
+                    fontSize: 9.5,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.8,
                   ),
@@ -661,10 +1163,19 @@ class _HomeScreenState extends State<HomeScreen>
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
-                const Icon(
-                  Icons.notifications_none_rounded,
-                  color: AppColors.ink,
-                ),
+                if (unreadCount > 0)
+                  RotationTransition(
+                    turns: _bellRotation,
+                    child: const Icon(
+                      Icons.notifications_active_rounded,
+                      color: AppColors.orangeDark,
+                    ),
+                  )
+                else
+                  const Icon(
+                    Icons.notifications_none_rounded,
+                    color: AppColors.ink,
+                  ),
                 if (unreadCount > 0)
                   Positioned(
                     right: -5,
@@ -677,82 +1188,347 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
           ),
-          Badge(
-            label: Text('${widget.cartCount}'),
-            isLabelVisible: widget.cartCount > 0,
-            backgroundColor: AppColors.orange,
-            child: IconButton(
-              onPressed: () =>
-                  _showNotice('Giỏ hàng hiện có ${widget.cartCount} món'),
-              tooltip: 'Giỏ hàng',
-              icon: const Icon(
-                Icons.shopping_bag_outlined,
-                color: AppColors.ink,
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  // --- SEARCH BAR ---
+  // --- SEARCH BAR & SUGGESTIONS ---
   Widget _buildSearch() {
+    final searchSuggestions = [
+      {'label': '🍚 Cơm', 'query': 'Cơm'},
+      {'label': '🍜 Phở', 'query': 'Phở'},
+      {'label': '🥢 Bún', 'query': 'Bún'},
+      {'label': '🍝 Mì', 'query': 'Mì'},
+      {'label': '🍵 Trà', 'query': 'Trà'},
+      {'label': '☕ Cà phê', 'query': 'Cà phê'},
+      {'label': '🔥 Bán chạy', 'query': 'Bán chạy'},
+      {'label': '⚡ Flash Sale', 'query': 'Flash Sale'},
+    ];
+
+    // Gợi ý món khớp khi đang nhập
+    final liveMatches = _query.isNotEmpty
+        ? widget.foods
+              .where(
+                (f) =>
+                    f.name.toLowerCase().contains(_query.toLowerCase()) ||
+                    f.category.toLowerCase().contains(_query.toLowerCase()),
+              )
+              .take(4)
+              .toList()
+        : <FoodItem>[];
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.line),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Khung tìm kiếm chính
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _query.isNotEmpty ? AppColors.orange : AppColors.line,
+                width: _query.isNotEmpty ? 1.5 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (value) => setState(() => _query = value),
+              decoration: InputDecoration(
+                hintText: 'Bạn muốn ăn gì hôm nay?',
+                hintStyle: TextStyle(
+                  color: Colors.grey.shade400,
+                  fontSize: 13.5,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search_rounded,
+                  color: AppColors.orange,
+                  size: 22,
+                ),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _query = '');
+                        },
+                      )
+                    : IconButton(
+                        icon: const Icon(
+                          Icons.tune_rounded,
+                          color: AppColors.orange,
+                          size: 20,
+                        ),
+                        tooltip: 'Mở danh mục món (Bên trái)',
+                        onPressed: () =>
+                            _scaffoldKey.currentState?.openDrawer(),
+                      ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+
+          // 2. Gợi ý từ khóa nhanh (khi chưa gõ)
+          if (_query.isEmpty) ...[
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: Row(
+                children: searchSuggestions.map((item) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: InkWell(
+                      onTap: () {
+                        final q = item['query']!;
+                        _searchController.text = q;
+                        setState(() => _query = q);
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFE5E7EB)),
+                        ),
+                        child: Text(
+                          item['label']!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF4B5563),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
             ),
           ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          onChanged: (value) => setState(() => _query = value),
-          decoration: InputDecoration(
-            hintText: 'Bạn muốn ăn gì hôm nay?',
-            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13.5),
-            prefixIcon: const Icon(
-              Icons.search_rounded,
-              color: AppColors.orange,
-              size: 22,
-            ),
-            suffixIcon: _query.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _query = '');
-                    },
-                  )
-                : const Icon(
-                    Icons.tune_rounded,
-                    color: AppColors.muted,
-                    size: 20,
+
+          // 3. Dropdown gợi ý trực tiếp ngay dưới ô tìm kiếm (khi đang gõ)
+          if (_query.isNotEmpty && liveMatches.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFCCBC)),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.orange.withValues(alpha: 0.1),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
                   ),
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-        ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'GỢI Ý MÓN ĂN',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.grey.shade500,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        Text(
+                          '${liveMatches.length} gợi ý',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                  ...liveMatches.map((food) {
+                    final sale = _getFlashSale(food.id);
+                    final isExplicitSale = sale != null;
+                    final effectivePrice = isExplicitSale
+                        ? sale.salePrice
+                        : food.price;
+                    final originalPrice = isExplicitSale
+                        ? (sale.originalPrice > 0
+                              ? sale.originalPrice
+                              : food.price)
+                        : food.oldPrice;
+                    final hasDiscount =
+                        originalPrice != null && originalPrice > effectivePrice;
+                    final showNeon =
+                        _isFlashSaleTimeActive &&
+                        (isExplicitSale || hasDiscount);
+
+                    return InkWell(
+                      onTap: () => _openFoodDetail(food),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          children: [
+                            showNeon
+                                ? NeonSpinBorder(
+                                    borderRadius: 6,
+                                    borderWidth: 1.8,
+                                    glow: true,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: SizedBox(
+                                        width: 38,
+                                        height: 38,
+                                        child: AppImage(
+                                          source: food.imageUrl,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: SizedBox(
+                                      width: 38,
+                                      height: 38,
+                                      child: AppImage(
+                                        source: food.imageUrl,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          food.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.ink,
+                                          ),
+                                        ),
+                                      ),
+                                      if (showNeon) ...[
+                                        const SizedBox(width: 5),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 4,
+                                            vertical: 1,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [
+                                                Color(0xFFFF007F),
+                                                Color(0xFFFF5500),
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              3,
+                                            ),
+                                          ),
+                                          child: const Text(
+                                            '⚡ SALE',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    food.category,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.muted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (hasDiscount)
+                                  Text(
+                                    '${_formatPrice(originalPrice)}đ',
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      color: AppColors.muted,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                Text(
+                                  '${_formatPrice(effectivePrice)}đ',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                    color: showNeon
+                                        ? const Color(0xFFE53935)
+                                        : AppColors.orange,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 18,
+                              color: AppColors.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
 
   // --- REAL FLASH SALE SECTION (SYNCHRONIZED WITH BACKEND) ---
   Widget _buildFlashSaleSection(FlashSaleCampaign campaign) {
-    final hours = _remainingTime.inHours.toString().padLeft(2, '0');
-    final minutes = (_remainingTime.inMinutes % 60).toString().padLeft(2, '0');
-    final seconds = (_remainingTime.inSeconds % 60).toString().padLeft(2, '0');
-
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 14),
       padding: const EdgeInsets.all(14),
@@ -828,29 +1604,59 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
               ),
-              // Countdown timer with red glowing numbers
-              _buildTimerBox(hours),
-              const Text(
-                ' : ',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.orangeDark,
-                ),
+              // Countdown timer with red glowing numbers & blinking separators (Only this part rebuilds every 1s!)
+              ValueListenableBuilder<Duration>(
+                valueListenable: _remainingTimeNotifier,
+                builder: (context, remainingTime, _) {
+                  final hours = remainingTime.inHours.toString().padLeft(
+                    2,
+                    '0',
+                  );
+                  final minutes = (remainingTime.inMinutes % 60)
+                      .toString()
+                      .padLeft(2, '0');
+                  final seconds = (remainingTime.inSeconds % 60)
+                      .toString()
+                      .padLeft(2, '0');
+                  final isBlink = remainingTime.inSeconds % 2 == 0;
+
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTimerBox(hours),
+                      AnimatedOpacity(
+                        opacity: isBlink ? 1.0 : 0.25,
+                        duration: const Duration(milliseconds: 200),
+                        child: const Text(
+                          ' : ',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: AppColors.orangeDark,
+                          ),
+                        ),
+                      ),
+                      _buildTimerBox(minutes),
+                      AnimatedOpacity(
+                        opacity: isBlink ? 1.0 : 0.25,
+                        duration: const Duration(milliseconds: 200),
+                        child: const Text(
+                          ' : ',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: AppColors.orangeDark,
+                          ),
+                        ),
+                      ),
+                      _buildTimerBox(seconds),
+                    ],
+                  );
+                },
               ),
-              _buildTimerBox(minutes),
-              const Text(
-                ' : ',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.orangeDark,
-                ),
-              ),
-              _buildTimerBox(seconds),
             ],
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 182,
+            height: 188,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: campaign.items.length,
@@ -888,173 +1694,208 @@ class _HomeScreenState extends State<HomeScreen>
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: () => _openFoodDetail(food),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      width: 126,
-                      padding: const EdgeInsets.all(7),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.line),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.03),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Stack(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: AspectRatio(
-                                  aspectRatio: 1.25,
-                                  child: Image.network(
-                                    item.image,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => const ColoredBox(
-                                      color: AppColors.soft,
-                                      child: Icon(
-                                        Icons.restaurant,
-                                        color: AppColors.orange,
-                                        size: 24,
-                                      ),
+                    borderRadius: BorderRadius.circular(12),
+                    child: NeonSpinBorder(
+                      borderRadius: 12,
+                      borderWidth: 2.2,
+                      glow: true,
+                      child: Container(
+                        width: 130,
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFF007F)
+                                  .withValues(alpha: 0.15),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Stack(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: AspectRatio(
+                                    aspectRatio: 1.25,
+                                    child: AppImage(
+                                      source: item.image,
+                                      fit: BoxFit.cover,
+                                      cacheWidth: 320,
+                                      errorBuilder: (_, _, _) =>
+                                          const ColoredBox(
+                                            color: AppColors.soft,
+                                            child: Icon(
+                                              Icons.restaurant,
+                                              color: AppColors.orange,
+                                              size: 24,
+                                            ),
+                                          ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              if (hasDiscount)
+                                if (hasDiscount)
+                                  Positioned(
+                                    top: 3,
+                                    left: 3,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          colors: [
+                                            Color(0xFFD50000),
+                                            Color(0xFFFF3D00),
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(3),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.red.withValues(
+                                              alpha: 0.3,
+                                            ),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 1),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Text(
+                                        '-$discountPercent%',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 Positioned(
                                   top: 3,
-                                  left: 3,
+                                  right: 3,
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 2,
+                                      horizontal: 4,
+                                      vertical: 1.5,
                                     ),
                                     decoration: BoxDecoration(
                                       gradient: const LinearGradient(
                                         colors: [
-                                          Color(0xFFD50000),
-                                          Color(0xFFFF3D00),
+                                          Color(0xFFFF007F),
+                                          Color(0xFFFF5500),
                                         ],
                                       ),
-                                      borderRadius: BorderRadius.circular(4),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.red.withValues(
-                                            alpha: 0.3,
-                                          ),
-                                          blurRadius: 4,
-                                          offset: const Offset(0, 1),
-                                        ),
-                                      ],
+                                      borderRadius: BorderRadius.circular(3),
                                     ),
-                                    child: Text(
-                                      '-$discountPercent%',
-                                      style: const TextStyle(
+                                    child: const Text(
+                                      'SALE',
+                                      style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 9,
+                                        fontSize: 7.5,
                                         fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.3,
                                       ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            item.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const Spacer(),
-                          if (hasDiscount)
-                            Text(
-                              '${_formatPrice(item.originalPrice)}đ',
-                              style: const TextStyle(
-                                fontSize: 9.5,
-                                color: AppColors.muted,
-                                decoration: TextDecoration.lineThrough,
-                              ),
-                            ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '${_formatPrice(item.salePrice)}đ',
-                                style: const TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w900,
-                                  color: Color(0xFFE53935),
-                                ),
-                              ),
-                              InkWell(
-                                onTap: () => widget.onAddToCart(item.name),
-                                borderRadius: BorderRadius.circular(4),
-                                child: Container(
-                                  padding: const EdgeInsets.all(3.5),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.orange,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Icon(
-                                    Icons.add,
-                                    size: 13,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          // Hot Flash Sale Progress Bar
-                          Container(
-                            height: 13,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFE0B2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Stack(
-                              alignment: Alignment.centerLeft,
-                              children: [
-                                FractionallySizedBox(
-                                  widthFactor: progress,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFFFF3D00),
-                                          Color(0xFFFF9100),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                ),
-                                Center(
-                                  child: Text(
-                                    '🔥 ĐÃ BÁN ${(progress * 100).round()}%',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 7.5,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 0.3,
                                     ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 5),
+                            Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (hasDiscount)
+                              Text(
+                                '${_formatPrice(item.originalPrice)}đ',
+                                style: const TextStyle(
+                                  fontSize: 9.5,
+                                  color: AppColors.muted,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '${_formatPrice(item.salePrice)}đ',
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFE53935),
+                                  ),
+                                ),
+                                InkWell(
+                                  onTap: () => widget.onAddToCart(item.name),
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(3.5),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.orange,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Icon(
+                                      Icons.add,
+                                      size: 13,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            // Hot Flash Sale Progress Bar
+                            Container(
+                              height: 13,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFE0B2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Stack(
+                                alignment: Alignment.centerLeft,
+                                children: [
+                                  FractionallySizedBox(
+                                    widthFactor: progress,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          colors: [
+                                            Color(0xFFFF3D00),
+                                            Color(0xFFFF9100),
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                  ),
+                                  Center(
+                                    child: Text(
+                                      '🔥 ĐÃ BÁN ${(progress * 100).round()}%',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 7.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1082,230 +1923,6 @@ class _HomeScreenState extends State<HomeScreen>
           fontWeight: FontWeight.w900,
         ),
       ),
-    );
-  }
-
-  // --- COMBO CAROUSEL BANNER (REAL COMBOS OR FEATURED FALLBACK) ---
-  Widget _buildComboCarousel() {
-    // If backend has combos, use them! Otherwise use featured combos
-    final hasRealCombos = widget.combos.isNotEmpty;
-    final bannerCount = hasRealCombos ? widget.combos.length : 3;
-
-    return Column(
-      children: [
-        SizedBox(
-          height: 180,
-          child: PageView.builder(
-            controller: _comboPageController,
-            itemCount: bannerCount,
-            onPageChanged: (idx) => setState(() => _currentComboPage = idx),
-            itemBuilder: (context, index) {
-              final String title = hasRealCombos
-                  ? widget.combos[index].name
-                  : (index == 0
-                        ? 'Combo Cơm Trưa'
-                        : (index == 1
-                              ? 'Combo Bữa Cơm Nhà'
-                              : 'Combo Lẩu Thái Hải Sản'));
-              final String desc = hasRealCombos
-                  ? (widget.combos[index].description ??
-                        'Món ngon tròn vị, ưu đãi hấp dẫn')
-                  : (index == 0
-                        ? 'Cơm gà + Coca-Cola, đủ ngon và tiết kiệm'
-                        : (index == 1
-                              ? 'Thịt kho tàu, Canh chua & Rau xào tỏi ấm cúng'
-                              : 'Hải sản tươi rói, nước lẩu chua cay đậm đà'));
-              final String price = hasRealCombos
-                  ? '${_formatPrice(widget.combos[index].price)}đ'
-                  : (index == 0
-                        ? '65.000đ'
-                        : (index == 1 ? '155.000đ' : '249.000đ'));
-              final String img =
-                  hasRealCombos && widget.combos[index].image.isNotEmpty
-                  ? widget.combos[index].image
-                  : (index == 0
-                        ? 'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=1200&q=85'
-                        : (index == 1
-                              ? 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=85'
-                              : 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1200&q=85'));
-
-              final comboFood = FoodItem(
-                id: hasRealCombos ? widget.combos[index].id : (99990 + index),
-                name: title,
-                category: 'Combo',
-                price: hasRealCombos
-                    ? widget.combos[index].price
-                    : (index == 0 ? 65000 : (index == 1 ? 155000 : 249000)),
-                imageUrl: img,
-                description: desc,
-                rating: 5.0,
-                sold: hasRealCombos ? widget.combos[index].maxAvailable : 100,
-              );
-
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2E170F),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF4E2D19).withValues(alpha: 0.12),
-                      blurRadius: 12,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                  image: DecorationImage(
-                    image: NetworkImage(img),
-                    fit: BoxFit.cover,
-                    alignment: Alignment.centerRight,
-                    opacity: 0.42,
-                    onError: (_, _) {},
-                  ),
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => _openFoodDetail(comboFood),
-                    child: Padding(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.orange,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Text(
-                              'COMBO ĐẶC SẮC',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            desc,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFFFE5D8),
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text(
-                                    'GIÁ TRỌN GÓI',
-                                    style: TextStyle(
-                                      color: Color(0xFFFFC29B),
-                                      fontSize: 8.5,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.4,
-                                    ),
-                                  ),
-                                  Text(
-                                    price,
-                                    style: const TextStyle(
-                                      color: Color(0xFFFFC13B),
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 14),
-                              FilledButton.icon(
-                                onPressed: () => widget.onAddToCart(title),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: AppColors.orange,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 8,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.shopping_cart_checkout,
-                                  size: 16,
-                                ),
-                                label: const Text(
-                                  'Đặt ngay',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 10),
-        // Dots indicator with active expansion & glow
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(bannerCount, (idx) {
-            final active = idx == _currentComboPage;
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              width: active ? 26 : 7,
-              height: 7,
-              decoration: BoxDecoration(
-                gradient: active
-                    ? const LinearGradient(
-                        colors: [Color(0xFFFFD166), AppColors.orange],
-                      )
-                    : null,
-                color: active ? null : const Color(0xFFDCD6D0),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: active
-                    ? [
-                        BoxShadow(
-                          color: AppColors.orange.withValues(alpha: 0.45),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ]
-                    : null,
-              ),
-            );
-          }),
-        ),
-      ],
     );
   }
 
@@ -1376,7 +1993,7 @@ class _HomeScreenState extends State<HomeScreen>
   // --- BEST SELLERS STRIP (SORTED FROM LIVE DATABASE) ---
   Widget _buildBestSellersStrip(List<FoodItem> items) {
     return SizedBox(
-      height: 196,
+      height: 210,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
@@ -1384,135 +2001,205 @@ class _HomeScreenState extends State<HomeScreen>
         separatorBuilder: (_, _) => const SizedBox(width: 12),
         itemBuilder: (context, idx) {
           final food = items[idx];
+          final sale = _getFlashSale(food.id);
+          final isExplicitSale = sale != null;
+          final effectivePrice = isExplicitSale ? sale.salePrice : food.price;
+          final originalPrice = isExplicitSale
+              ? (sale.originalPrice > 0 ? sale.originalPrice : food.price)
+              : food.oldPrice;
+          final hasDiscount =
+              originalPrice != null && originalPrice > effectivePrice;
+          final showNeonSpin =
+              _isFlashSaleTimeActive && (isExplicitSale || hasDiscount);
+
+          final cardContainer = Container(
+            width: 140,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: showNeonSpin ? Colors.transparent : AppColors.line,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: showNeonSpin
+                      ? const Color(0xFFFF007F).withValues(alpha: 0.15)
+                      : Colors.black.withValues(alpha: 0.03),
+                  blurRadius: showNeonSpin ? 10 : 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(12),
+                      ),
+                      child: AspectRatio(
+                        aspectRatio: 1.3,
+                        child: AppImage(
+                          source: food.imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const ColoredBox(
+                            color: AppColors.soft,
+                            child: Icon(
+                              Icons.restaurant,
+                              color: AppColors.orange,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: idx < 3
+                              ? const Color(0xFFD9480F)
+                              : AppColors.ink,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'TOP ${idx + 1}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (showNeonSpin)
+                      Positioned(
+                        right: 6,
+                        top: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFFF007F), Color(0xFFFF5500)],
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            '⚡ SALE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          food.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${food.sold} lượt mua',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                        const Spacer(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (hasDiscount)
+                                  Text(
+                                    '${_formatPrice(originalPrice)}đ',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: AppColors.muted,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                Text(
+                                  '${_formatPrice(effectivePrice)}đ',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    color: showNeonSpin
+                                        ? const Color(0xFFE53935)
+                                        : AppColors.orangeDark,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            InkWell(
+                              onTap: () => widget.onAddToCart(food.name),
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: showNeonSpin
+                                      ? const Color(0xFFFF5500)
+                                      : AppColors.orange,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          final cardContent = showNeonSpin
+              ? NeonSpinBorder(
+                  borderRadius: 12,
+                  borderWidth: 2.2,
+                  glow: true,
+                  child: cardContainer,
+                )
+              : cardContainer;
+
           return Material(
             color: Colors.transparent,
             child: InkWell(
               onTap: () => _openFoodDetail(food),
               borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 140,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.line),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(12),
-                          ),
-                          child: AspectRatio(
-                            aspectRatio: 1.35,
-                            child: AppImage(
-                              source: food.imageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => const ColoredBox(
-                                color: AppColors.soft,
-                                child: Icon(
-                                  Icons.restaurant,
-                                  color: AppColors.orange,
-                                  size: 30,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: 6,
-                          top: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: idx < 3
-                                  ? const Color(0xFFD9480F)
-                                  : AppColors.ink,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              'TOP ${idx + 1}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              food.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${food.sold} lượt mua',
-                              style: const TextStyle(
-                                fontSize: 10.5,
-                                color: AppColors.muted,
-                              ),
-                            ),
-                            const Spacer(),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  '${_formatPrice(food.price)}đ',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w900,
-                                    color: AppColors.orangeDark,
-                                  ),
-                                ),
-                                InkWell(
-                                  onTap: () => widget.onAddToCart(food.name),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.orange,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: const Icon(
-                                      Icons.add,
-                                      color: Colors.white,
-                                      size: 14,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: cardContent,
             ),
           );
         },
@@ -1536,15 +2223,67 @@ class _HomeScreenState extends State<HomeScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  kicker,
-                  style: const TextStyle(
-                    color: AppColors.orange,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
+                if (kicker.contains('BÁN CHẠY'))
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3.5,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFFF3D00),
+                          Color(0xFFFF6E40),
+                          Color(0xFFFF9100),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFF3D00)
+                              .withValues(alpha: 0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        RotationTransition(
+                          turns: Tween<double>(
+                            begin: -0.04,
+                            end: 0.04,
+                          ).animate(_flameAnimController),
+                          child: const Text(
+                            '🔥',
+                            style: TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Text(
+                          'BÁN CHẠY NHẤT',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Text(
+                    kicker,
+                    style: const TextStyle(
+                      color: AppColors.orange,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 2),
                 Text(
                   title,
@@ -1576,78 +2315,814 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // --- CATEGORIES BAR ---
-  Widget _buildCategories() {
-    final categories = _categories;
-    final icons = [
-      Icons.restaurant_menu_rounded,
-      Icons.rice_bowl_rounded,
-      Icons.ramen_dining_rounded,
-      Icons.soup_kitchen_rounded,
-      Icons.local_fire_department_rounded,
-      Icons.local_drink_rounded,
-      Icons.cake_rounded,
-    ];
-
-    return SizedBox(
-      height: 78,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: categories.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 9),
-        itemBuilder: (context, index) {
-          final category = categories[index];
-          final selected = category == _selectedCategory;
-          final icon = icons[index % icons.length];
-
-          return InkWell(
-            onTap: () => setState(() => _selectedCategory = category),
-            borderRadius: BorderRadius.circular(12),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: 82,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-              decoration: BoxDecoration(
-                color: selected ? AppColors.orange : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: selected ? AppColors.orange : AppColors.line,
+  // --- ACTIVE CATEGORY FILTER BANNER ---
+  Widget _buildActiveCategoryFilterBanner(int count) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7F0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFD8BF)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.orange.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AppColors.orange.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              _getCategoryIcon(_selectedCategory),
+              color: AppColors.orange,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'DANH MỤC ĐANG XEM',
+                  style: TextStyle(
+                    color: AppColors.orangeDark,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
                 ),
-                boxShadow: selected
-                    ? [
-                        BoxShadow(
-                          color: AppColors.orange.withValues(alpha: 0.28),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ]
-                    : null,
+                Text(
+                  '$_selectedCategory ($count món)',
+                  style: const TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          InkWell(
+            onTap: () => setState(() => _selectedCategory = 'Tất cả'),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFFCCBC)),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    icon,
-                    color: selected ? Colors.white : AppColors.orange,
-                    size: 24,
+                    Icons.close_rounded,
+                    size: 14,
+                    color: AppColors.orangeDark,
                   ),
-                  const SizedBox(height: 5),
+                  SizedBox(width: 3),
                   Text(
-                    category,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    'Bỏ lọc',
                     style: TextStyle(
-                      color: selected ? Colors.white : AppColors.ink,
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.orangeDark,
                     ),
                   ),
                 ],
               ),
             ),
-          );
-        },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- LEFT DRAWER (MATCHING MOBILE WEB SCREENSHOT media_1789526465559.png) ---
+  Widget _buildCategoryDrawer() {
+    final drawerWidth = (MediaQuery.of(context).size.width * 0.84).clamp(
+      280.0,
+      340.0,
+    );
+
+    return Drawer(
+      width: drawerWidth,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(18)),
+      ),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 1. Top Bar with Hamburger Close Button (☰)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => Navigator.of(context).pop(),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFF1E3D8)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.03),
+                            blurRadius: 4,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.menu_rounded,
+                        color: Color(0xFF2C2724),
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // 2. Auth Header Buttons (or User Profile Card if logged in)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              child: widget.session == null
+                  ? Column(
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          height: 46,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              widget.onSelectTab?.call(3);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFF5722),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                            ),
+                            child: const Text(
+                              'Đăng nhập',
+                              style: TextStyle(
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              widget.onSelectTab?.call(3);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFF3EB),
+                              foregroundColor: const Color(0xFFFF5722),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                            ),
+                            child: const Text(
+                              'Đăng ký',
+                              style: TextStyle(
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF8F4),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFF1E3D8)),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundColor: const Color(0xFFFF5722),
+                            backgroundImage:
+                                widget.session!.user.avatar != null &&
+                                    widget.session!.user.avatar!.isNotEmpty
+                                ? NetworkImage(widget.session!.user.avatar!)
+                                : null,
+                            child:
+                                widget.session!.user.avatar == null ||
+                                    widget.session!.user.avatar!.isEmpty
+                                ? Text(
+                                    widget.session!.user.fullname.isNotEmpty
+                                        ? widget.session!.user.fullname[0]
+                                              .toUpperCase()
+                                        : 'U',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.session!.user.fullname,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF2C2724),
+                                  ),
+                                ),
+                                Text(
+                                  widget.session!.user.email.isNotEmpty
+                                      ? widget.session!.user.email
+                                      : widget.session!.user.phone,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF8C7E77),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              widget.onSelectTab?.call(3);
+                            },
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFFFF5722),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'Hồ sơ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+
+            // 3. Navigation Card Items
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                children: [
+                  // Trang chủ
+                  _buildDrawerCardItem(
+                    label: 'Trang chủ',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      widget.onSelectTab?.call(0);
+                    },
+                  ),
+
+                  // Đồ ăn ▾
+                  _buildDrawerAccordionItem(
+                    rootTitle: 'Đồ ăn',
+                    rootSlug: 'do-an',
+                    defaultChildren: const [
+                      'Cơm',
+                      'Phở',
+                      'Mì',
+                      'Bún',
+                      'Burger',
+                      'Pizza',
+                      'Gà rán',
+                    ],
+                  ),
+
+                  // Nước uống ▾
+                  _buildDrawerAccordionItem(
+                    rootTitle: 'Nước uống',
+                    rootSlug: 'nuoc-uong',
+                    defaultChildren: const [
+                      'Trà',
+                      'Cà phê',
+                      'Nước ép và sinh tố',
+                      'Nước đóng chai',
+                    ],
+                  ),
+
+                  // Bánh kẹo ▾
+                  _buildDrawerAccordionItem(
+                    rootTitle: 'Bánh kẹo',
+                    rootSlug: 'banh-keo',
+                    defaultChildren: const [
+                      'Bánh ngọt',
+                      'Bánh quy',
+                      'Kẹo sô cô la',
+                    ],
+                  ),
+
+                  // Giỏ hàng
+                  _buildDrawerCardItem(
+                    label: 'Giỏ hàng',
+                    badgeCount: widget.cartCount,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context)
+                        ..hideCurrentSnackBar()
+                        ..showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              widget.cartCount > 0
+                                  ? 'Giỏ hàng hiện có ${widget.cartCount} món ăn'
+                                  : 'Giỏ hàng hiện đang trống',
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                    },
+                  ),
+
+                  // Lịch sử đơn
+                  _buildDrawerCardItem(
+                    label: 'Lịch sử đơn',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      widget.onSelectTab?.call(1);
+                    },
+                  ),
+
+                  // Phản hồi
+                  _buildDrawerCardItem(
+                    label: 'Phản hồi',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _showFeedbackDialog();
+                    },
+                  ),
+
+                  // Liên hệ
+                  _buildDrawerCardItem(
+                    label: 'Liên hệ',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _showContactDialog();
+                    },
+                  ),
+
+                  // Voucher
+                  _buildDrawerCardItem(
+                    label: 'Voucher',
+                    badgeCount: widget.availableVoucherCount,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _showVoucherSummary();
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- DRAWER CARD ITEM WIDGET ---
+  Widget _buildDrawerCardItem({
+    required String label,
+    required VoidCallback onTap,
+    int badgeCount = 0,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF1E3D8)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.015),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2C2724),
+                  ),
+                ),
+                const Spacer(),
+                if (badgeCount > 0) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF5722),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '$badgeCount',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- DRAWER EXPANDABLE ACCORDION ITEM WIDGET ---
+  Widget _buildDrawerAccordionItem({
+    required String rootTitle,
+    required String rootSlug,
+    required List<String> defaultChildren,
+  }) {
+    final isExpanded = _expandedDrawerCategories.contains(rootTitle);
+
+    final rootCat = widget.categories
+        .where(
+          (c) =>
+              !c.isChild &&
+              (_normalize(c.name) == _normalize(rootTitle) ||
+                  c.slug == rootSlug),
+        )
+        .firstOrNull;
+
+    List<String> childNames = [];
+    if (rootCat != null) {
+      childNames = widget.categories
+          .where((c) => c.parentId == rootCat.id)
+          .map((c) => c.name)
+          .toList();
+    }
+    if (childNames.isEmpty) {
+      childNames = defaultChildren;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  if (isExpanded) {
+                    _expandedDrawerCategories.remove(rootTitle);
+                  } else {
+                    _expandedDrawerCategories.add(rootTitle);
+                  }
+                });
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFF1E3D8)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.015),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      rootTitle,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF2C2724),
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      isExpanded
+                          ? Icons.arrow_drop_up_rounded
+                          : Icons.arrow_drop_down_rounded,
+                      color: const Color(0xFF2C2724),
+                      size: 26,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (isExpanded)
+            Container(
+              margin: const EdgeInsets.fromLTRB(14, 8, 0, 4),
+              padding: const EdgeInsets.only(left: 12),
+              decoration: const BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: Color(0xFFF2D6C9), width: 1.5),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildDrawerChildCard(
+                    title: 'Tất cả $rootTitle',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _openCategoryScreen(rootTitle);
+                    },
+                  ),
+                  for (final child in childNames)
+                    _buildDrawerChildCard(
+                      title: child,
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _openCategoryScreen(child);
+                      },
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrawerChildCard({
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFF1E3D8)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _getCategoryIcon(title),
+                  size: 18,
+                  color: const Color(0xFFFF5722),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF3E332E),
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: Color(0xFFC7B8AF),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- DIALOGS FOR FEEDBACK & CONTACT ---
+  void _showFeedbackDialog() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(
+                    Icons.rate_review_rounded,
+                    color: AppColors.orange,
+                    size: 28,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Gửi phản hồi cho Bếp 1979',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Ý kiến đóng góp của quý khách giúp chúng tôi ngày càng hoàn thiện chất lượng món ăn và dịch vụ.',
+                style: TextStyle(fontSize: 13.5, color: AppColors.muted),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Nhập nội dung phản hồi hoặc góp ý...',
+                  hintStyle: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.muted,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFFFFF8F4),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFF1E3D8)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFF1E3D8)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showNotice('Cảm ơn bạn đã gửi phản hồi cho Bếp 1979!');
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF5722),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Gửi phản hồi',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showContactDialog() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(
+                    Icons.headset_mic_rounded,
+                    color: AppColors.orange,
+                    size: 28,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Thông tin liên hệ',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildContactRow(
+                Icons.phone_in_talk_rounded,
+                'Hotline đặt món: 0387 700 547',
+              ),
+              _buildContactRow(
+                Icons.access_time_filled_rounded,
+                'Giờ mở cửa: 08:00 - 22:00 hàng ngày',
+              ),
+              _buildContactRow(
+                Icons.location_on_rounded,
+                'Địa chỉ: 123 Đường Ẩm Thực, Quận 1, TP. HCM',
+              ),
+              _buildContactRow(
+                Icons.chat_bubble_rounded,
+                'Zalo hỗ trợ: Bếp 1979 Official',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContactRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFFFF5722)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF332924),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2105,51 +3580,71 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // --- STORE FOOTER SECTION ---
+  // --- STORE FOOTER SECTION (SYNCHRONIZED WITH WEB SHARED FOOTER) ---
   Widget _buildFooterSection() {
+    const textColor = Color(0xFFFFF7ED);
+    final mutedText = textColor.withValues(alpha: 0.82);
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 20, 18, 36),
-      color: const Color(0xFF241812),
+      decoration: const BoxDecoration(
+        color: Color(0xFF3A291F),
+        border: Border(top: BorderSide(color: Color(0x1FFFFFFF), width: 1)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 36, 20, 48),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 1. Footer Brand
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 44,
+                height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: AppColors.orange,
-                  borderRadius: BorderRadius.circular(10),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFE65100), Color(0xFFFF7043)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: const Text(
                   '79',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 17,
+                    fontSize: 20,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              const Column(
+              const SizedBox(width: 12),
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Hệ Thống Bếp 1979',
+                  const Text(
+                    'Bếp 1979',
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
+                      color: textColor,
+                      fontSize: 21,
                       fontWeight: FontWeight.w900,
+                      letterSpacing: -0.3,
                     ),
                   ),
                   Text(
-                    'MÓN NGON MỖI NGÀY',
+                    'Món ngon mỗi ngày',
                     style: TextStyle(
-                      color: Color(0xFFFFAB91),
-                      fontSize: 9,
+                      color: textColor.withValues(alpha: 0.68),
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
                     ),
                   ),
                 ],
@@ -2157,25 +3652,470 @@ class _HomeScreenState extends State<HomeScreen>
             ],
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Hotline đặt món: 1900 1979 • 08:00 - 22:00',
+          Text(
+            'Nền tảng giao đồ ăn hiện đại, kết nối khách hàng với thực đơn tươi ngon, thanh toán linh hoạt và theo dõi đơn hàng minh bạch.',
             style: TextStyle(
-              color: Color(0xFFFFCCBC),
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
+              color: textColor.withValues(alpha: 0.88),
+              fontSize: 13,
+              height: 1.6,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'Địa chỉ: 79 Đường Ẩm Thực, Quận 1, TP. Hồ Chí Minh',
-            style: TextStyle(color: Colors.white70, fontSize: 11.5),
+          const SizedBox(height: 18),
+
+          // Contact List
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: () => _showNotice('Hotline Bếp 1979: 0387 700 547'),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.phone_in_talk_rounded,
+                        color: AppColors.orange,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Hotline: ',
+                        style: TextStyle(color: mutedText, fontSize: 13),
+                      ),
+                      const Text(
+                        '0387 700 547',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () => _showNotice('Email: tdchinh04@gmail.com'),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.email_outlined,
+                        color: AppColors.orange,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Email: ',
+                        style: TextStyle(color: mutedText, fontSize: 13),
+                      ),
+                      const Text(
+                        'tdchinh04@gmail.com',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.access_time_rounded,
+                      color: AppColors.orange,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Giờ phục vụ: 08:00 - 22:00 hằng ngày',
+                      style: TextStyle(color: mutedText, fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 14),
-          const Divider(color: Colors.white12),
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
+
+          // Social Icons Row
+          Row(
+            children: [
+              _buildFooterSocialButton(
+                icon: Icons.language_rounded,
+                tooltip: 'Website Bếp 1979',
+                onTap: () => _showNotice('Website Bếp 1979'),
+              ),
+              const SizedBox(width: 12),
+              _buildFooterSocialButton(
+                icon: Icons.mail_outline_rounded,
+                tooltip: 'Email Bếp 1979',
+                onTap: () => _showNotice('Email: tdchinh04@gmail.com'),
+              ),
+              const SizedBox(width: 12),
+              _buildFooterSocialButton(
+                icon: Icons.call_rounded,
+                tooltip: 'Hotline Bếp 1979',
+                onTap: () => _showNotice('Hotline: 0387 700 547'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 28),
+
+          // 2. Footer Links Grid (2 Columns)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Column 1: KHÁM PHÁ & KHÁCH HÀNG
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildFooterLinkGroupTitle('KHÁM PHÁ'),
+                    _buildFooterLinkItem(
+                      'Trang chủ',
+                      onTap: () {
+                        _searchController.clear();
+                        setState(() {
+                          _query = '';
+                          _selectedCategory = 'Tất cả';
+                        });
+                      },
+                    ),
+                    _buildFooterLinkItem(
+                      'Thực đơn',
+                      onTap: () => _openCategoryScreen('Tất cả thực đơn'),
+                    ),
+                    _buildFooterLinkItem(
+                      'Đồ ăn',
+                      onTap: () => _openCategoryScreen('Đồ ăn'),
+                    ),
+                    _buildFooterLinkItem(
+                      'Nước uống',
+                      onTap: () => _openCategoryScreen('Nước uống'),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildFooterLinkGroupTitle('KHÁCH HÀNG'),
+                    _buildFooterLinkItem(
+                      'Giỏ hàng (${widget.cartCount})',
+                      onTap: () {
+                        _showNotice(
+                          'Giỏ hàng hiện có ${widget.cartCount} món ăn.',
+                        );
+                      },
+                    ),
+                    _buildFooterLinkItem(
+                      'Lịch sử đơn',
+                      onTap: () {
+                        _showNotice('Vui lòng chuyển sang tab Đơn hàng.');
+                      },
+                    ),
+                    _buildFooterLinkItem(
+                      'Thông báo',
+                      onTap: _showAnnouncements,
+                    ),
+                    _buildFooterLinkItem(
+                      'Voucher (${widget.availableVoucherCount})',
+                      onTap: _showVoucherSummary,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 20),
+              // Column 2: HỖ TRỢ & CAM KẾT
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildFooterLinkGroupTitle('HỖ TRỢ'),
+                    _buildFooterLinkItem(
+                      'Trung tâm hỗ trợ',
+                      onTap: () => _showNotice('Trung tâm CSKH: 0387 700 547'),
+                    ),
+                    _buildFooterLinkItem(
+                      'Gửi phản hồi',
+                      onTap: () => _showNotice(
+                        'Cảm ơn bạn đã đóng góp ý kiến cho Bếp 1979!',
+                      ),
+                    ),
+                    _buildFooterLinkItem(
+                      'Hợp tác cửa hàng',
+                      onTap: () =>
+                          _showNotice('Liên hệ hợp tác: tdchinh04@gmail.com'),
+                    ),
+                    _buildFooterLinkItem(
+                      'Liên hệ Bếp 1979',
+                      onTap: () =>
+                          _showNotice('Bếp 1979 hân hạnh phục vụ quý khách!'),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildFooterLinkGroupTitle('CAM KẾT'),
+                    _buildFooterCommitmentItem('Món ăn cập nhật từ hệ thống'),
+                    _buildFooterCommitmentItem('Kiểm tra tồn kho khi đặt hàng'),
+                    _buildFooterCommitmentItem('Theo dõi trạng thái đơn'),
+                    _buildFooterCommitmentItem('Hỗ trợ COD, QR và VNPay'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 28),
+
+          // 3. Store Map Card
+          Container(
+            height: 155,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              children: [
+                // Simulated Map Graphic Background with road grid and location pin
+                Container(
+                  color: const Color(0xFF281D17),
+                  child: CustomPaint(
+                    size: Size.infinite,
+                    painter: _FooterMapPainter(),
+                  ),
+                ),
+                // Center Map Marker Pin
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF5722),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFF5722)
+                                  .withValues(alpha: 0.5),
+                              blurRadius: 12,
+                              spreadRadius: 3,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.restaurant,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.8),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'Bếp 1979 • 10.1005, 105.6865',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Floating map badge (header)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  right: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A291F).withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.15),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.storefront_rounded,
+                              color: AppColors.orange,
+                              size: 15,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Bếp 1979 Store',
+                              style: TextStyle(
+                                color: textColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                        InkWell(
+                          onTap: () => _showNotice(
+                            'Tọa độ Bếp 1979: 10.100528, 105.686583',
+                          ),
+                          child: const Text(
+                            'Mở bản đồ lớn ↗',
+                            style: TextStyle(
+                              color: Color(0xFFFFB08A),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
+
+          // 4. Footer Bottom
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.only(top: 20),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+              ),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '© 2026 Bếp 1979. All rights reserved.',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.9),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Designed by Tran Duc Chinh IT',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.65),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFooterSocialButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          ),
+          child: Icon(icon, color: const Color(0xFFFFF7ED), size: 20),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooterLinkGroupTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Color(0xFFFFF7ED),
+          fontSize: 13,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooterLinkItem(String label, {required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: const Color(0xFFFFF7ED).withValues(alpha: 0.82),
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooterCommitmentItem(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           const Text(
-            '© 2026 Bếp 1979. Nền tảng đặt món ăn online chính thức.',
-            style: TextStyle(color: Colors.white38, fontSize: 10.5),
+            '• ',
+            style: TextStyle(
+              color: AppColors.orange,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: const Color(0xFFFFF7ED).withValues(alpha: 0.78),
+                fontSize: 11.5,
+                height: 1.35,
+              ),
+            ),
           ),
         ],
       ),
@@ -2241,20 +4181,364 @@ class _HomeScreenState extends State<HomeScreen>
     }
     return chunks.join('.');
   }
+}
 
-  List<String> get _categories {
-    final foodCategoryNames = widget.foods
-        .map((food) => food.category)
-        .where((name) => name.trim().isNotEmpty)
-        .toSet();
-    final apiCategories = widget.categories
-        .where((category) => category.isChild)
-        .where((category) => foodCategoryNames.contains(category.name))
-        .map((category) => category.name)
-        .toList();
-    final remaining = foodCategoryNames.where(
-      (name) => !apiCategories.contains(name),
+class _FooterMapPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final roadPaint = Paint()
+      ..color = const Color(0xFF45342B)
+      ..strokeWidth = 5
+      ..style = PaintingStyle.stroke;
+
+    final mainRoadPaint = Paint()
+      ..color = const Color(0xFF5A4438)
+      ..strokeWidth = 8
+      ..style = PaintingStyle.stroke;
+
+    final riverPaint = Paint()
+      ..color = const Color(0xFF1E3A4A).withValues(alpha: 0.7)
+      ..strokeWidth = 14
+      ..style = PaintingStyle.stroke;
+
+    // Curved river
+    final riverPath = Path()
+      ..moveTo(0, size.height * 0.8)
+      ..quadraticBezierTo(
+        size.width * 0.45,
+        size.height * 0.95,
+        size.width,
+        size.height * 0.45,
+      );
+    canvas.drawPath(riverPath, riverPaint);
+
+    // Grid roads
+    canvas.drawLine(
+      Offset(0, size.height * 0.35),
+      Offset(size.width, size.height * 0.35),
+      mainRoadPaint,
     );
-    return ['Tất cả', ...apiCategories, ...remaining];
+    canvas.drawLine(
+      Offset(0, size.height * 0.65),
+      Offset(size.width, size.height * 0.65),
+      roadPaint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.28, 0),
+      Offset(size.width * 0.28, size.height),
+      roadPaint,
+    );
+    canvas.drawLine(
+      Offset(size.width * 0.68, 0),
+      Offset(size.width * 0.68, size.height),
+      mainRoadPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ============================================================================
+// HOME COMBO CAROUSEL (Isolated StatefulWidget to prevent full-screen lag)
+// ============================================================================
+
+class HomeComboCarousel extends StatefulWidget {
+  const HomeComboCarousel({
+    super.key,
+    required this.combos,
+    required this.onAddToCart,
+    this.onTapFood,
+  });
+
+  final List<ComboItem> combos;
+  final ValueChanged<String> onAddToCart;
+  final void Function(FoodItem)? onTapFood;
+
+  @override
+  State<HomeComboCarousel> createState() => _HomeComboCarouselState();
+}
+
+class _HomeComboCarouselState extends State<HomeComboCarousel> {
+  late final PageController _pageController;
+  int _currentPage = 0;
+  Timer? _autoScrollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(viewportFraction: 0.93);
+    _startAutoScroll();
+  }
+
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    if (widget.combos.length <= 1) return;
+
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 4000), (
+      timer,
+    ) {
+      if (!mounted || !_pageController.hasClients) return;
+      final nextPage = (_currentPage + 1) % widget.combos.length;
+      _pageController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _pauseAutoScroll() {
+    _autoScrollTimer?.cancel();
+  }
+
+  String _formatPrice(int value) {
+    final digits = value.toString();
+    final chunks = <String>[];
+    for (var end = digits.length; end > 0; end -= 3) {
+      chunks.insert(0, digits.substring((end - 3).clamp(0, end), end));
+    }
+    return '${chunks.join('.')}đ';
+  }
+
+  @override
+  void dispose() {
+    _autoScrollTimer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.combos.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF6D00), Color(0xFFFF9100)],
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('🍱', style: TextStyle(fontSize: 12)),
+                        SizedBox(width: 4),
+                        Text(
+                          'COMBO TIẾT KIỆM',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Ưu đãi đặc biệt hôm nay',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+              if (widget.combos.length > 1)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(
+                    widget.combos.length,
+                    (index) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                      width: _currentPage == index ? 16 : 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: _currentPage == index
+                            ? AppColors.orange
+                            : const Color(0xFFD1D5DB),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 175,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification) {
+                _pauseAutoScroll();
+              } else if (notification is ScrollEndNotification) {
+                _startAutoScroll();
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: widget.combos.length,
+              onPageChanged: (index) {
+                setState(() => _currentPage = index);
+              },
+              itemBuilder: (context, index) {
+                final combo = widget.combos[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 4,
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // 1. Ảnh combo nền có cache đĩa
+                          AppImage(source: combo.image, fit: BoxFit.cover),
+
+                          // 2. Lớp phủ gradient tối ưu hiệu năng
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.35),
+                                  Colors.black.withValues(alpha: 0.85),
+                                ],
+                                stops: const [0.35, 0.65, 1.0],
+                              ),
+                            ),
+                          ),
+
+                          // 3. Nội dung thông tin combo & nút bấm
+                          Positioned(
+                            left: 14,
+                            right: 14,
+                            bottom: 12,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        combo.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.2,
+                                        ),
+                                      ),
+                                      if (combo.description != null &&
+                                          combo.description!.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          combo.description!,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.85,
+                                            ),
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _formatPrice(combo.price),
+                                        style: const TextStyle(
+                                          color: Color(0xFFFFD54F),
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                ElevatedButton(
+                                  onPressed: () =>
+                                      widget.onAddToCart(combo.name),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.orange,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 8,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.add_shopping_cart, size: 14),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'Chọn mua',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+      ],
+    );
   }
 }

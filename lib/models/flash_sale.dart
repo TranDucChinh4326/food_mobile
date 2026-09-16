@@ -82,4 +82,22 @@ class FlashSaleCampaign {
       items: itemsList,
     );
   }
+
+  bool get isCurrentlyActive {
+    if (items.isEmpty) return false;
+    final now = DateTime.now();
+    if (startsAt != null && startsAt!.isNotEmpty) {
+      try {
+        final start = DateTime.parse(startsAt!.replaceAll(' ', 'T'));
+        if (now.isBefore(start)) return false;
+      } catch (_) {}
+    }
+    if (endsAt != null && endsAt!.isNotEmpty) {
+      try {
+        final end = DateTime.parse(endsAt!.replaceAll(' ', 'T'));
+        if (now.isAfter(end)) return false;
+      } catch (_) {}
+    }
+    return true;
+  }
 }
