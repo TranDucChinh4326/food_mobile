@@ -428,6 +428,13 @@ class _CartScreenState extends State<CartScreen>
 
     try {
       final cartItemsPayload = widget.items.map((item) {
+        if (item.isCombo) {
+          return {
+            'comboId': item.comboId,
+            'quantity': item.quantity,
+            'type': 'combo',
+          };
+        }
         return {
           'foodId': item.food.id,
           'quantity': item.quantity,

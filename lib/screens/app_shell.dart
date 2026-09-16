@@ -134,7 +134,33 @@ class _AppShellState extends State<AppShell> {
   // ──────────────────────────────────────────────
 
   /// Thêm một món vào giỏ. Nếu đã có thì tăng số lượng.
-  void _addToCart(String foodName, {int? salePrice}) {
+  void _addToCart(String foodName, {int? salePrice, ComboItem? combo}) {
+    if (combo != null) {
+      final comboFood = FoodItem(
+        id: -combo.id,
+        name: combo.name,
+        category: 'Combo',
+        price: combo.price,
+        imageUrl: combo.image,
+        rating: 0,
+        sold: 0,
+      );
+      setState(() {
+        final existingIndex = _cartItems.indexWhere(
+          (item) => item.comboId == combo.id,
+        );
+        if (existingIndex >= 0) {
+          _cartItems[existingIndex].quantity++;
+        } else {
+          _cartItems.add(
+            CartItem(food: comboFood, quantity: 1, comboId: combo.id),
+          );
+        }
+      });
+      _showAddedToCartMessage(combo.name);
+      return;
+    }
+
     final food = _foods.firstWhere(
       (f) => f.name == foodName,
       orElse: () => FoodItem(
@@ -148,15 +174,33 @@ class _AppShellState extends State<AppShell> {
       ),
     );
 
+    salePrice ??= _activeSalePriceFor(food.id);
+
     setState(() {
       final existingIndex = _cartItems.indexWhere((i) => i.food.id == food.id);
       if (existingIndex >= 0) {
         _cartItems[existingIndex].quantity++;
+        _cartItems[existingIndex].salePrice = salePrice;
       } else {
         _cartItems.add(CartItem(food: food, quantity: 1, salePrice: salePrice));
       }
     });
 
+    _showAddedToCartMessage(foodName);
+  }
+
+  int? _activeSalePriceFor(int foodId) {
+    for (final campaign in _flashSales) {
+      for (final item in campaign.items) {
+        if (item.foodId == foodId && item.salePrice > 0) {
+          return item.salePrice;
+        }
+      }
+    }
+    return null;
+  }
+
+  void _showAddedToCartMessage(String foodName) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -243,6 +287,7 @@ class _AppShellState extends State<AppShell> {
         cartCount: _cartCount,
         favorites: _favorites,
         onAddToCart: (name) => _addToCart(name),
+        onAddComboToCart: (combo) => _addToCart(combo.name, combo: combo),
         onToggleFavorite: _toggleFavorite,
         onMarkAnnouncementsRead: _markAnnouncementsRead,
         session: widget.session,
