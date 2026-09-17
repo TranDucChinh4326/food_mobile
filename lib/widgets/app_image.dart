@@ -96,8 +96,11 @@ class _DiskCachedNetworkImage extends StatefulWidget {
 }
 
 class _DiskCachedNetworkImageState extends State<_DiskCachedNetworkImage> {
+  static final Map<String, Future<File?>> _downloads = {};
+
   File? _cachedFile;
   bool _isDownloading = false;
+  bool _downloadFailed = false;
 
   @override
   void initState() {
@@ -114,6 +117,7 @@ class _DiskCachedNetworkImageState extends State<_DiskCachedNetworkImage> {
   }
 
   void _checkAndLoad() {
+    _downloadFailed = false;
     if (LocalCacheService.isImageCached(widget.source)) {
       _cachedFile = LocalCacheService.getCachedImageFile(widget.source);
     } else {
@@ -126,25 +130,32 @@ class _DiskCachedNetworkImageState extends State<_DiskCachedNetworkImage> {
     if (_isDownloading) return;
     _isDownloading = true;
     try {
-      final response = await http
-          .get(Uri.parse(widget.source))
-          .timeout(const Duration(seconds: 25));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        await LocalCacheService.saveImageBytes(
-          widget.source,
-          response.bodyBytes,
-        );
-        if (mounted) {
-          setState(() {
-            _cachedFile = LocalCacheService.getCachedImageFile(widget.source);
-          });
-        }
+      final file = await _downloads.putIfAbsent(
+        widget.source,
+        () => _download(widget.source),
+      );
+      if (mounted) {
+        setState(() {
+          _cachedFile = file;
+          _downloadFailed = file == null;
+        });
       }
     } catch (_) {
-      // Ignored: Image.network fallback below handles display
+      if (mounted) setState(() => _downloadFailed = true);
     } finally {
+      _downloads.remove(widget.source);
       _isDownloading = false;
     }
+  }
+
+  static Future<File?> _download(String source) async {
+    final response = await http
+        .get(Uri.parse(source))
+        .timeout(const Duration(seconds: 25));
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    await LocalCacheService.saveImageBytes(source, response.bodyBytes);
+    final file = LocalCacheService.getCachedImageFile(source);
+    return file.existsSync() && file.lengthSync() > 0 ? file : null;
   }
 
   @override
@@ -157,6 +168,10 @@ class _DiskCachedNetworkImageState extends State<_DiskCachedNetworkImage> {
         gaplessPlayback: true,
         errorBuilder: widget.errorBuilder,
       );
+    }
+
+    if (!_downloadFailed) {
+      return const ImageShimmerSkeleton();
     }
 
     return Image.network(

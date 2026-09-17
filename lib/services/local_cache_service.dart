@@ -2,11 +2,31 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path_provider/path_provider.dart';
+
 /// High-performance local cache service for food data and images.
 /// Enables offline-first, instant 0ms app startup, and minimal database/network usage.
 class LocalCacheService {
+  static const int maxImageCacheBytes = 150 * 1024 * 1024;
+  static const Duration maxImageAge = Duration(days: 30);
+
   static Directory? _baseDataCacheDir;
   static Directory? _baseImageCacheDir;
+
+  static Future<void> initialize() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      final temporary = await getTemporaryDirectory();
+      _baseDataCacheDir = Directory('${support.path}/data_cache');
+      _baseImageCacheDir = Directory('${temporary.path}/image_cache');
+      await _baseDataCacheDir!.create(recursive: true);
+      await _baseImageCacheDir!.create(recursive: true);
+      await pruneImageCache();
+    } catch (_) {
+      // The synchronous fallback getters keep the app usable on unsupported
+      // platforms or when storage initialization temporarily fails.
+    }
+  }
 
   static Directory get _dataCacheDir {
     if (_baseDataCacheDir != null && _baseDataCacheDir!.existsSync()) {
@@ -141,6 +161,41 @@ class LocalCacheService {
       if (bytes.isEmpty) return;
       final file = getCachedImageFile(url);
       await file.writeAsBytes(bytes, flush: true);
+    } catch (_) {}
+  }
+
+  static Future<void> pruneImageCache() async {
+    try {
+      final directory = _imageCacheDir;
+      final files = directory
+          .listSync()
+          .whereType<File>()
+          .map((file) => (file: file, stat: file.statSync()))
+          .toList();
+      final cutoff = DateTime.now().subtract(maxImageAge);
+
+      for (final entry in files.where(
+        (entry) => entry.stat.modified.isBefore(cutoff),
+      )) {
+        await entry.file.delete().catchError((_) => entry.file);
+      }
+
+      final remaining =
+          directory
+              .listSync()
+              .whereType<File>()
+              .map((file) => (file: file, stat: file.statSync()))
+              .toList()
+            ..sort((a, b) => a.stat.modified.compareTo(b.stat.modified));
+      var totalBytes = remaining.fold<int>(
+        0,
+        (total, entry) => total + entry.stat.size,
+      );
+      for (final entry in remaining) {
+        if (totalBytes <= maxImageCacheBytes) break;
+        await entry.file.delete();
+        totalBytes -= entry.stat.size;
+      }
     } catch (_) {}
   }
 }

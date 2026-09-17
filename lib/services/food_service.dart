@@ -194,7 +194,7 @@ class FoodService {
     if (!forceRefresh &&
         LocalCacheService.isFresh(
           'flash_sales_cache',
-          const Duration(minutes: 2),
+          const Duration(minutes: 1),
         )) {
       final cached = getCachedFlashSales();
       if (cached != null) return cached;
@@ -227,10 +227,7 @@ class FoodService {
 
   Future<List<ComboItem>> fetchCombos({bool forceRefresh = false}) async {
     if (!forceRefresh &&
-        LocalCacheService.isFresh(
-          'combos_cache',
-          const Duration(minutes: 10),
-        )) {
+        LocalCacheService.isFresh('combos_cache', const Duration(minutes: 5))) {
       final cached = getCachedCombos();
       if (cached != null) return cached;
     }
@@ -270,7 +267,7 @@ class FoodService {
         !forceRefresh &&
         LocalCacheService.isFresh(
           'reviews_cache',
-          const Duration(minutes: 5),
+          const Duration(minutes: 10),
         )) {
       final cached = getCachedReviews();
       if (cached != null) return cached;
@@ -320,7 +317,7 @@ class FoodService {
     if (!forceRefresh &&
         LocalCacheService.isFresh(
           'categories_cache',
-          const Duration(minutes: 15),
+          const Duration(hours: 24),
         )) {
       final cached = getCachedCategories();
       if (cached != null) return cached;
@@ -362,7 +359,7 @@ class FoodService {
     if (!forceRefresh &&
         LocalCacheService.isFresh(
           'advertisements_cache',
-          const Duration(minutes: 10),
+          const Duration(minutes: 3),
         )) {
       final cached = getCachedAdvertisements();
       if (cached != null) return cached;
