@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/auth_session.dart';
 import '../services/auth_service.dart';
+import '../widgets/app_brand_mark.dart';
 import 'app_shell.dart';
 import 'auth_screen.dart';
 
@@ -72,7 +73,7 @@ class _StartupScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _AppLogo(size: 76),
+              AppBrandMark(size: 76),
               SizedBox(height: 14),
               Text(
                 'Bếp 1979',
@@ -104,44 +105,6 @@ class _StartupScreen extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AppLogo extends StatelessWidget {
-  const _AppLogo({required this.size});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFFF6E40), Color(0xFFFF5722)],
-        ),
-        borderRadius: BorderRadius.circular(size * 0.28),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFFF5722).withValues(alpha: 0.35),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Text(
-        '79',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: size * 0.42,
-          fontWeight: FontWeight.w900,
         ),
       ),
     );

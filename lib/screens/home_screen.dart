@@ -11,6 +11,7 @@ import '../models/food_review_item.dart';
 import '../models/home_content.dart';
 import '../services/notification_service.dart';
 import '../widgets/announcement_marquee_ticker.dart';
+import '../widgets/app_brand_mark.dart';
 import '../widgets/app_image.dart';
 import '../widgets/food_card.dart';
 import '../widgets/neon_spin_border.dart';
@@ -1428,34 +1429,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(width: 10),
           // 2. Brand Mark
-          Container(
-            width: 42,
-            height: 42,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFFF6E40), AppColors.orange],
-              ),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.orange.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: const Text(
-              '79',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 19,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
+          const AppBrandMark(size: 42, borderRadius: 12),
           const SizedBox(width: 10),
           const Expanded(
             child: Column(
@@ -3933,33 +3907,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           // 1. Footer Brand
           Row(
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFE65100), Color(0xFFFF7043)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Text(
-                  '79',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+              const AppBrandMark(
+                size: 44,
+                borderRadius: 12,
+                shadowColor: Color(0x47000000),
               ),
               const SizedBox(width: 12),
               Column(

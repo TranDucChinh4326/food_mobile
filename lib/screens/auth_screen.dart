@@ -8,6 +8,7 @@ import '../models/auth_session.dart';
 import '../services/api_exception.dart';
 import '../services/auth_service.dart';
 import '../services/notification_service.dart';
+import '../widgets/app_brand_mark.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
@@ -581,35 +582,7 @@ class _AuthScreenState extends State<AuthScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Container(
-          width: 52,
-          height: 52,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFFF6E40), AppColors.orange],
-            ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.orange.withValues(alpha: 0.28),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Text(
-            '79',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
+        const AppBrandMark(size: 52, borderRadius: 14),
         const SizedBox(width: 14),
         const Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -14,6 +14,7 @@ class AuthService {
       _storage = storage ?? const FlutterSecureStorage();
 
   static const _tokenKey = 'bep1979_access_token';
+  static const _clientTypeHeader = 'X-Client-Type';
   final http.Client _client;
   final FlutterSecureStorage _storage;
 
@@ -44,6 +45,7 @@ class AuthService {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        _clientTypeHeader: 'app',
       },
       body: jsonEncode({'accessToken': accessToken}),
     );
@@ -80,6 +82,7 @@ class AuthService {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        _clientTypeHeader: 'app',
       },
       body: jsonEncode({
         'accessToken': accessToken,
@@ -625,6 +628,7 @@ class AuthService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+              _clientTypeHeader: 'app',
             },
             body: jsonEncode(body),
           )
