@@ -19,6 +19,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   final AuthService _authService = AuthService();
   AuthSession? _session;
+  String? _sessionNotice;
   bool _restoring = true;
   bool _checkingSession = false;
   Timer? _sessionCheckTimer;
@@ -54,14 +55,22 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     _startSessionChecks();
   }
 
-  Future<void> _logout() async {
+  Future<void> _logout({String? notice}) async {
     _sessionCheckTimer?.cancel();
     await _authService.logout();
-    if (mounted) setState(() => _session = null);
+    if (mounted) {
+      setState(() {
+        _session = null;
+        _sessionNotice = notice;
+      });
+    }
   }
 
   void _authenticated(AuthSession session) {
-    setState(() => _session = session);
+    setState(() {
+      _session = session;
+      _sessionNotice = null;
+    });
     _startSessionChecks();
   }
 
@@ -86,7 +95,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       }
     } on ApiException catch (error) {
       if (error.statusCode == 401 && _session?.token == session.token) {
-        await _logout();
+        await _logout(
+          notice: 'Tài khoản của bạn đã được đăng nhập trên một điện thoại khác. Phiên đăng nhập trên thiết bị này đã kết thúc.',
+        );
       }
     } finally {
       _checkingSession = false;
@@ -100,11 +111,12 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       return AuthScreen(
         authService: _authService,
         onAuthenticated: _authenticated,
+        initialNotice: _sessionNotice,
       );
     }
     return AppShell(
       session: _session!,
-      onLogout: _logout,
+      onLogout: () => _logout(),
       onSessionUpdated: (session) => setState(() => _session = session),
     );
   }

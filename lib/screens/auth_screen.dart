@@ -15,10 +15,12 @@ class AuthScreen extends StatefulWidget {
     super.key,
     required this.authService,
     required this.onAuthenticated,
+    this.initialNotice,
   });
 
   final AuthService authService;
   final ValueChanged<AuthSession> onAuthenticated;
+  final String? initialNotice;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -58,6 +60,7 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   void initState() {
     super.initState();
+    _error = widget.initialNotice;
     _passwordController.addListener(_onPasswordChanged);
   }
 

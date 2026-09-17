@@ -21,4 +21,23 @@ void main() {
     expect(find.text('Họ và tên'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
   });
+
+  testWidgets('shows a clear notice when another phone replaces the session', (
+    tester,
+  ) async {
+    const notice =
+        'Tài khoản của bạn đã được đăng nhập trên một điện thoại khác. Phiên đăng nhập trên thiết bị này đã kết thúc.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthScreen(
+          authService: AuthService(),
+          onAuthenticated: (_) {},
+          initialNotice: notice,
+        ),
+      ),
+    );
+
+    expect(find.text(notice), findsOneWidget);
+  });
 }
