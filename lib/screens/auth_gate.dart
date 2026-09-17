@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/auth_session.dart';
 import '../services/auth_service.dart';
+import '../services/api_exception.dart';
 import '../widgets/app_brand_mark.dart';
 import 'app_shell.dart';
 import 'auth_screen.dart';
@@ -13,15 +16,32 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<AuthGate> {
+class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   final AuthService _authService = AuthService();
   AuthSession? _session;
   bool _restoring = true;
+  bool _checkingSession = false;
+  Timer? _sessionCheckTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _restore();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _sessionCheckTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_verifyActiveSession());
+    }
   }
 
   Future<void> _restore() async {
@@ -31,11 +51,46 @@ class _AuthGateState extends State<AuthGate> {
       _session = session;
       _restoring = false;
     });
+    _startSessionChecks();
   }
 
   Future<void> _logout() async {
+    _sessionCheckTimer?.cancel();
     await _authService.logout();
     if (mounted) setState(() => _session = null);
+  }
+
+  void _authenticated(AuthSession session) {
+    setState(() => _session = session);
+    _startSessionChecks();
+  }
+
+  void _startSessionChecks() {
+    _sessionCheckTimer?.cancel();
+    if (_session == null) return;
+    _sessionCheckTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(_verifyActiveSession()),
+    );
+  }
+
+  Future<void> _verifyActiveSession() async {
+    final session = _session;
+    if (session == null || _checkingSession) return;
+
+    _checkingSession = true;
+    try {
+      final user = await _authService.fetchProfile(session.token);
+      if (mounted && _session?.token == session.token) {
+        setState(() => _session = session.copyWith(user: user));
+      }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401 && _session?.token == session.token) {
+        await _logout();
+      }
+    } finally {
+      _checkingSession = false;
+    }
   }
 
   @override
@@ -44,7 +99,7 @@ class _AuthGateState extends State<AuthGate> {
     if (_session == null) {
       return AuthScreen(
         authService: _authService,
-        onAuthenticated: (session) => setState(() => _session = session),
+        onAuthenticated: _authenticated,
       );
     }
     return AppShell(
