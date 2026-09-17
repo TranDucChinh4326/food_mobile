@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
@@ -13,7 +15,7 @@ class LocalCacheService {
   static Directory? _baseDataCacheDir;
   static Directory? _baseImageCacheDir;
 
-  static Future<void> initialize() async {
+  static Future<void> initialize({bool schedulePrune = true}) async {
     try {
       final support = await getApplicationSupportDirectory();
       final temporary = await getTemporaryDirectory();
@@ -21,7 +23,12 @@ class LocalCacheService {
       _baseImageCacheDir = Directory('${temporary.path}/image_cache');
       await _baseDataCacheDir!.create(recursive: true);
       await _baseImageCacheDir!.create(recursive: true);
-      await pruneImageCache();
+      if (schedulePrune) {
+        // Avoid competing with Flutter's first frames and image decoding.
+        unawaited(
+          Future<void>.delayed(const Duration(seconds: 15), pruneImageCache),
+        );
+      }
     } catch (_) {
       // The synchronous fallback getters keep the app usable on unsupported
       // platforms or when storage initialization temporarily fails.
@@ -52,6 +59,14 @@ class LocalCacheService {
     }
     _baseImageCacheDir = dir;
     return dir;
+  }
+
+  static String get dataCachePath => _dataCacheDir.path;
+  static String get imageCachePath => _imageCacheDir.path;
+
+  static void initializeFromPaths(String dataPath, String imagePath) {
+    _baseDataCacheDir = Directory(dataPath);
+    _baseImageCacheDir = Directory(imagePath);
   }
 
   static File _getDataFile(String key) =>
@@ -166,36 +181,31 @@ class LocalCacheService {
 
   static Future<void> pruneImageCache() async {
     try {
-      final directory = _imageCacheDir;
-      final files = directory
-          .listSync()
-          .whereType<File>()
-          .map((file) => (file: file, stat: file.statSync()))
-          .toList();
-      final cutoff = DateTime.now().subtract(maxImageAge);
+      final path = _imageCacheDir.path;
+      await Isolate.run(() => _pruneImageDirectory(path));
+    } catch (_) {}
+  }
+}
 
-      for (final entry in files.where(
-        (entry) => entry.stat.modified.isBefore(cutoff),
-      )) {
-        await entry.file.delete().catchError((_) => entry.file);
-      }
-
-      final remaining =
-          directory
-              .listSync()
-              .whereType<File>()
-              .map((file) => (file: file, stat: file.statSync()))
-              .toList()
-            ..sort((a, b) => a.stat.modified.compareTo(b.stat.modified));
-      var totalBytes = remaining.fold<int>(
-        0,
-        (total, entry) => total + entry.stat.size,
-      );
-      for (final entry in remaining) {
-        if (totalBytes <= maxImageCacheBytes) break;
-        await entry.file.delete();
-        totalBytes -= entry.stat.size;
-      }
+void _pruneImageDirectory(String path) {
+  final directory = Directory(path);
+  if (!directory.existsSync()) return;
+  final cutoff = DateTime.now().subtract(LocalCacheService.maxImageAge);
+  var files = directory.listSync().whereType<File>().toList();
+  for (final file in files) {
+    try {
+      if (file.statSync().modified.isBefore(cutoff)) file.deleteSync();
+    } catch (_) {}
+  }
+  files = directory.listSync().whereType<File>().toList()
+    ..sort((a, b) => a.statSync().modified.compareTo(b.statSync().modified));
+  var total = files.fold<int>(0, (sum, file) => sum + file.lengthSync());
+  for (final file in files) {
+    if (total <= LocalCacheService.maxImageCacheBytes) break;
+    try {
+      final size = file.lengthSync();
+      file.deleteSync();
+      total -= size;
     } catch (_) {}
   }
 }

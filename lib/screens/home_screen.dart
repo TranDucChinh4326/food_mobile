@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
@@ -10,11 +9,13 @@ import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/food_review_item.dart';
 import '../models/home_content.dart';
+import '../services/notification_service.dart';
 import '../widgets/announcement_marquee_ticker.dart';
 import '../widgets/app_image.dart';
 import '../widgets/food_card.dart';
 import '../widgets/neon_spin_border.dart';
 import '../widgets/skeleton_loader.dart';
+import '../widgets/scroll_reveal.dart';
 import 'category_screen.dart';
 import 'food_detail_screen.dart';
 
@@ -76,9 +77,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final PageController _announcementPageController = PageController();
   int _selectedReviewRating = 0; // 0 for All, or 5, 4, 3
   List<FoodItem> _topBestSellers = const [];
+  final ScrollController _homeScrollController = ScrollController();
 
   Timer? _timer;
   Timer? _announcementTimer;
+  Timer? _advertisementTimer;
   final ValueNotifier<Duration> _remainingTimeNotifier =
       ValueNotifier<Duration>(Duration.zero);
   late final AnimationController _flameAnimController;
@@ -226,24 +229,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _timer?.cancel();
     _announcementTimer?.cancel();
+    _advertisementTimer?.cancel();
     _remainingTimeNotifier.dispose();
     _flameAnimController.dispose();
     _bellAnimController.dispose();
     _searchController.dispose();
     _announcementPageController.dispose();
+    _homeScrollController.dispose();
     super.dispose();
   }
 
   void _showNotice(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+    NotificationService.instance.showInfo('Bếp 1979', message);
   }
 
   void _openFoodDetail(FoodItem food) {
@@ -330,28 +327,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       children: orderedNames.map((name) {
         final items = grouped[name]!.take(4).toList();
-        return Column(
-          children: [
-            _buildSectionHeading(
-              kicker: 'THỰC ĐƠN',
-              title: name,
-              action: 'Xem tất cả',
-              onAction: () => _openCategoryScreen(name),
-            ),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
-              itemCount: items.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 14,
-                crossAxisSpacing: 14,
-                childAspectRatio: 0.65,
+        return ScrollReveal(
+          offsetY: 22,
+          child: Column(
+            children: [
+              _buildSectionHeading(
+                kicker: 'THỰC ĐƠN',
+                title: name,
+                action: 'Xem tất cả',
+                onAction: () => _openCategoryScreen(name),
               ),
-              itemBuilder: (context, index) => _buildFoodCard(items[index]),
-            ),
-          ],
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
+                itemCount: items.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 14,
+                  crossAxisSpacing: 14,
+                  childAspectRatio: 0.65,
+                ),
+                itemBuilder: (context, index) => _buildFoodCard(items[index]),
+              ),
+            ],
+          ),
         );
       }).toList(),
     );
@@ -397,7 +397,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_hasShownAdPopup) return;
     _hasShownAdPopup = true;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _advertisementTimer?.cancel();
+    _advertisementTimer = Timer(const Duration(milliseconds: 1200), () {
       if (!mounted) return;
       _showAdvertisementPopup();
     });
@@ -477,436 +478,414 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final modalWidth = screen.width;
         final modalHeight = screen.height * 0.74;
 
-        return BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Center(
-            child: StatefulBuilder(
-              builder: (ctx, setModalState) {
-                return Material(
-                  color: Colors.transparent,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Header nhỏ chỉ dẫn
-                      if (promoSlides.length > 1)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.swipe_rounded,
-                                  color: Colors.white70,
-                                  size: 14,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Vuốt sang để xem thêm ưu đãi',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
+        return Center(
+          child: StatefulBuilder(
+            builder: (ctx, setModalState) {
+              return Material(
+                color: Colors.transparent,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header nhỏ chỉ dẫn
+                    if (promoSlides.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
                           ),
-                        ),
-
-                      SizedBox(
-                        width: modalWidth,
-                        height: modalHeight,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            // Carousel PageView (Hiệu ứng Coverflow dạng App xem phim)
-                            Positioned.fill(
-                              child: PageView.builder(
-                                controller: pageController,
-                                itemCount: promoSlides.length,
-                                onPageChanged: (idx) {
-                                  setModalState(() => currentAdIndex = idx);
-                                },
-                                itemBuilder: (context, idx) {
-                                  final slide = promoSlides[idx];
-                                  final title = slide['title'] as String? ?? '';
-                                  final subtitle = slide['subtitle'] as String?;
-                                  final badge = slide['badge'] as String? ?? '';
-                                  final badgeColor =
-                                      slide['badgeColor'] as Color? ??
-                                      AppColors.orange;
-                                  final food = slide['food'] as FoodItem?;
-
-                                  return AnimatedBuilder(
-                                    animation: pageController,
-                                    builder: (context, child) {
-                                      double scale = 1.0;
-                                      double opacity = 1.0;
-                                      if (pageController
-                                          .position
-                                          .haveDimensions) {
-                                        final page =
-                                            pageController.page ??
-                                            currentAdIndex.toDouble();
-                                        final diff = (page - idx).abs();
-                                        // Poster ở giữa phóng to 1.0, hai bên thu nhỏ 0.86 và mờ nhẹ
-                                        scale = (1 - (diff * 0.14)).clamp(
-                                          0.86,
-                                          1.0,
-                                        );
-                                        opacity = (1 - (diff * 0.35)).clamp(
-                                          0.65,
-                                          1.0,
-                                        );
-                                      } else {
-                                        scale = idx == currentAdIndex
-                                            ? 1.0
-                                            : 0.88;
-                                        opacity = idx == currentAdIndex
-                                            ? 1.0
-                                            : 0.7;
-                                      }
-                                      return Center(
-                                        child: Transform.scale(
-                                          scale: scale,
-                                          child: Opacity(
-                                            opacity: opacity,
-                                            child: child,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        Navigator.of(dialogContext).pop();
-                                        if (food != null) {
-                                          _openFoodDetail(food);
-                                        }
-                                      },
-                                      child: Container(
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            22,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.55,
-                                              ),
-                                              blurRadius: 28,
-                                              offset: const Offset(0, 12),
-                                            ),
-                                          ],
-                                        ),
-                                        clipBehavior: Clip.antiAlias,
-                                        child: Stack(
-                                          fit: StackFit.expand,
-                                          children: [
-                                            // Ảnh poster bìa tràn viền
-                                            AppImage(
-                                              source: slide['image'] as String,
-                                              fit: BoxFit.cover,
-                                            ),
-
-                                            // Lớp phủ Gradient đen điện ảnh phía dưới
-                                            Positioned.fill(
-                                              child: DecoratedBox(
-                                                decoration: BoxDecoration(
-                                                  gradient: LinearGradient(
-                                                    begin: Alignment.topCenter,
-                                                    end: Alignment.bottomCenter,
-                                                    colors: [
-                                                      Colors.transparent,
-                                                      Colors.transparent,
-                                                      Colors.black.withValues(
-                                                        alpha: 0.45,
-                                                      ),
-                                                      Colors.black.withValues(
-                                                        alpha: 0.92,
-                                                      ),
-                                                    ],
-                                                    stops: const [
-                                                      0.0,
-                                                      0.45,
-                                                      0.7,
-                                                      1.0,
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-
-                                            // Thông tin tên món và huy hiệu
-                                            Positioned(
-                                              left: 16,
-                                              right: 16,
-                                              bottom: 18,
-                                              child: Row(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.end,
-                                                children: [
-                                                  Expanded(
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        if (badge.isNotEmpty)
-                                                          Container(
-                                                            padding:
-                                                                const EdgeInsets.symmetric(
-                                                                  horizontal: 8,
-                                                                  vertical: 3.5,
-                                                                ),
-                                                            decoration:
-                                                                BoxDecoration(
-                                                                  color:
-                                                                      badgeColor,
-                                                                  borderRadius:
-                                                                      BorderRadius.circular(
-                                                                        6,
-                                                                      ),
-                                                                ),
-                                                            child: Text(
-                                                              badge,
-                                                              style: const TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontSize: 10.5,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w900,
-                                                                letterSpacing:
-                                                                    0.4,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        const SizedBox(
-                                                          height: 6,
-                                                        ),
-                                                        Text(
-                                                          title,
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style:
-                                                              const TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontSize: 16.5,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w900,
-                                                                height: 1.25,
-                                                              ),
-                                                        ),
-                                                        if (subtitle != null &&
-                                                            subtitle
-                                                                .isNotEmpty) ...[
-                                                          const SizedBox(
-                                                            height: 3,
-                                                          ),
-                                                          Text(
-                                                            subtitle,
-                                                            maxLines: 1,
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis,
-                                                            style: TextStyle(
-                                                              color: Colors
-                                                                  .white
-                                                                  .withValues(
-                                                                    alpha: 0.85,
-                                                                  ),
-                                                              fontSize: 12,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .w500,
-                                                            ),
-                                                          ),
-                                                        ],
-                                                        if (food != null) ...[
-                                                          const SizedBox(
-                                                            height: 4,
-                                                          ),
-                                                          Text(
-                                                            _formatPrice(
-                                                              food.price,
-                                                            ),
-                                                            style:
-                                                                const TextStyle(
-                                                                  color: Color(
-                                                                    0xFFFFD54F,
-                                                                  ),
-                                                                  fontSize: 16,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w900,
-                                                                ),
-                                                          ),
-                                                        ],
-                                                      ],
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  Container(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 11,
-                                                          vertical: 6.5,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      gradient:
-                                                          const LinearGradient(
-                                                            colors: [
-                                                              Color(0xFFFF6D00),
-                                                              Color(0xFFFF9100),
-                                                            ],
-                                                          ),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            20,
-                                                          ),
-                                                      boxShadow: [
-                                                        BoxShadow(
-                                                          color:
-                                                              const Color(
-                                                                0xFFFF6D00,
-                                                              ).withValues(
-                                                                alpha: 0.4,
-                                                              ),
-                                                          blurRadius: 6,
-                                                          offset: const Offset(
-                                                            0,
-                                                            2,
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    child: Row(
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        const Icon(
-                                                          Icons
-                                                              .play_arrow_rounded,
-                                                          size: 15,
-                                                          color: Colors.white,
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 2,
-                                                        ),
-                                                        Text(
-                                                          food != null
-                                                              ? 'Đặt món'
-                                                              : 'Xem ngay',
-                                                          style:
-                                                              const TextStyle(
-                                                                color: Colors
-                                                                    .white,
-                                                                fontSize: 11,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w800,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.swipe_rounded,
+                                color: Colors.white70,
+                                size: 14,
                               ),
-                            ),
-
-                            // Nút 'X' đóng ở góc trên bên phải
-                            Positioned(
-                              top: 10,
-                              right: 20,
-                              child: GestureDetector(
-                                onTap: () => Navigator.of(dialogContext).pop(),
-                                child: Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.75),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.5,
-                                      ),
-                                      width: 1.5,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.45,
-                                        ),
-                                        blurRadius: 8,
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Icon(
-                                    Icons.close_rounded,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
+                              SizedBox(width: 6),
+                              Text(
+                                'Vuốt sang để xem thêm ưu đãi',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
 
-                      // Thanh chấm tròn chỉ số banner (Dots indicator)
-                      if (promoSlides.length > 1) ...[
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(promoSlides.length, (idx) {
-                            final isActive = idx == currentAdIndex;
-                            return AnimatedContainer(
-                              duration: const Duration(milliseconds: 250),
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 3.5,
+                    SizedBox(
+                      width: modalWidth,
+                      height: modalHeight,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          // Carousel PageView (Hiệu ứng Coverflow dạng App xem phim)
+                          Positioned.fill(
+                            child: PageView.builder(
+                              controller: pageController,
+                              itemCount: promoSlides.length,
+                              onPageChanged: (idx) {
+                                setModalState(() => currentAdIndex = idx);
+                              },
+                              itemBuilder: (context, idx) {
+                                final slide = promoSlides[idx];
+                                final title = slide['title'] as String? ?? '';
+                                final subtitle = slide['subtitle'] as String?;
+                                final badge = slide['badge'] as String? ?? '';
+                                final badgeColor =
+                                    slide['badgeColor'] as Color? ??
+                                    AppColors.orange;
+                                final food = slide['food'] as FoodItem?;
+
+                                return AnimatedBuilder(
+                                  animation: pageController,
+                                  builder: (context, child) {
+                                    double scale = 1.0;
+                                    double opacity = 1.0;
+                                    if (pageController
+                                        .position
+                                        .haveDimensions) {
+                                      final page =
+                                          pageController.page ??
+                                          currentAdIndex.toDouble();
+                                      final diff = (page - idx).abs();
+                                      // Poster ở giữa phóng to 1.0, hai bên thu nhỏ 0.86 và mờ nhẹ
+                                      scale = (1 - (diff * 0.14)).clamp(
+                                        0.86,
+                                        1.0,
+                                      );
+                                      opacity = (1 - (diff * 0.35)).clamp(
+                                        0.65,
+                                        1.0,
+                                      );
+                                    } else {
+                                      scale = idx == currentAdIndex
+                                          ? 1.0
+                                          : 0.88;
+                                      opacity = idx == currentAdIndex
+                                          ? 1.0
+                                          : 0.7;
+                                    }
+                                    return Center(
+                                      child: Transform.scale(
+                                        scale: scale,
+                                        child: Opacity(
+                                          opacity: opacity,
+                                          child: child,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      Navigator.of(dialogContext).pop();
+                                      if (food != null) {
+                                        _openFoodDetail(food);
+                                      }
+                                    },
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(22),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(
+                                              alpha: 0.55,
+                                            ),
+                                            blurRadius: 28,
+                                            offset: const Offset(0, 12),
+                                          ),
+                                        ],
+                                      ),
+                                      clipBehavior: Clip.antiAlias,
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          // Ảnh poster bìa tràn viền
+                                          AppImage(
+                                            source: slide['image'] as String,
+                                            fit: BoxFit.cover,
+                                          ),
+
+                                          // Lớp phủ Gradient đen điện ảnh phía dưới
+                                          Positioned.fill(
+                                            child: DecoratedBox(
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(
+                                                  begin: Alignment.topCenter,
+                                                  end: Alignment.bottomCenter,
+                                                  colors: [
+                                                    Colors.transparent,
+                                                    Colors.transparent,
+                                                    Colors.black.withValues(
+                                                      alpha: 0.45,
+                                                    ),
+                                                    Colors.black.withValues(
+                                                      alpha: 0.92,
+                                                    ),
+                                                  ],
+                                                  stops: const [
+                                                    0.0,
+                                                    0.45,
+                                                    0.7,
+                                                    1.0,
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+
+                                          // Thông tin tên món và huy hiệu
+                                          Positioned(
+                                            left: 16,
+                                            right: 16,
+                                            bottom: 18,
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      if (badge.isNotEmpty)
+                                                        Container(
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 8,
+                                                                vertical: 3.5,
+                                                              ),
+                                                          decoration: BoxDecoration(
+                                                            color: badgeColor,
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  6,
+                                                                ),
+                                                          ),
+                                                          child: Text(
+                                                            badge,
+                                                            style:
+                                                                const TextStyle(
+                                                                  color: Colors
+                                                                      .white,
+                                                                  fontSize:
+                                                                      10.5,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w900,
+                                                                  letterSpacing:
+                                                                      0.4,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                      const SizedBox(height: 6),
+                                                      Text(
+                                                        title,
+                                                        maxLines: 2,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 16.5,
+                                                          fontWeight:
+                                                              FontWeight.w900,
+                                                          height: 1.25,
+                                                        ),
+                                                      ),
+                                                      if (subtitle != null &&
+                                                          subtitle
+                                                              .isNotEmpty) ...[
+                                                        const SizedBox(
+                                                          height: 3,
+                                                        ),
+                                                        Text(
+                                                          subtitle,
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            color: Colors.white
+                                                                .withValues(
+                                                                  alpha: 0.85,
+                                                                ),
+                                                            fontSize: 12,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                      if (food != null) ...[
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        Text(
+                                                          _formatPrice(
+                                                            food.price,
+                                                          ),
+                                                          style:
+                                                              const TextStyle(
+                                                                color: Color(
+                                                                  0xFFFFD54F,
+                                                                ),
+                                                                fontSize: 16,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w900,
+                                                              ),
+                                                        ),
+                                                      ],
+                                                    ],
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 11,
+                                                        vertical: 6.5,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    gradient:
+                                                        const LinearGradient(
+                                                          colors: [
+                                                            Color(0xFFFF6D00),
+                                                            Color(0xFFFF9100),
+                                                          ],
+                                                        ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          20,
+                                                        ),
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color:
+                                                            const Color(
+                                                              0xFFFF6D00,
+                                                            ).withValues(
+                                                              alpha: 0.4,
+                                                            ),
+                                                        blurRadius: 6,
+                                                        offset: const Offset(
+                                                          0,
+                                                          2,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      const Icon(
+                                                        Icons
+                                                            .play_arrow_rounded,
+                                                        size: 15,
+                                                        color: Colors.white,
+                                                      ),
+                                                      const SizedBox(width: 2),
+                                                      Text(
+                                                        food != null
+                                                            ? 'Đặt món'
+                                                            : 'Xem ngay',
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 11,
+                                                          fontWeight:
+                                                              FontWeight.w800,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+
+                          // Nút 'X' đóng ở góc trên bên phải
+                          Positioned(
+                            top: 10,
+                            right: 20,
+                            child: GestureDetector(
+                              onTap: () => Navigator.of(dialogContext).pop(),
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.5),
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.45,
+                                      ),
+                                      blurRadius: 8,
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.close_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
                               ),
-                              width: isActive ? 22 : 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: isActive
-                                    ? AppColors.orange
-                                    : Colors.white.withValues(alpha: 0.4),
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                            );
-                          }),
-                        ),
-                      ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Thanh chấm tròn chỉ số banner (Dots indicator)
+                    if (promoSlides.length > 1) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(promoSlides.length, (idx) {
+                          final isActive = idx == currentAdIndex;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            margin: const EdgeInsets.symmetric(horizontal: 3.5),
+                            width: isActive ? 22 : 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: isActive
+                                  ? AppColors.orange
+                                  : Colors.white.withValues(alpha: 0.4),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          );
+                        }),
+                      ),
                     ],
-                  ),
-                );
-              },
-            ),
+                  ],
+                ),
+              );
+            },
           ),
         );
       },
@@ -1254,119 +1233,155 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             widget.onRetry();
             await Future.delayed(const Duration(milliseconds: 600));
           },
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              // 1. Header Top (with Hamburger menu on the left to open drawer)
-              SliverToBoxAdapter(child: _buildHeader()),
+          child: HomeScrollScope(
+            scrollController: _homeScrollController,
+            child: CustomScrollView(
+              controller: _homeScrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                // 1. Header Top (with Hamburger menu on the left to open drawer)
+                SliverToBoxAdapter(child: _buildHeader()),
 
-              // 2. Search & Filter Bar
-              SliverToBoxAdapter(child: _buildSearch()),
+                // 2. Search & Filter Bar
+                SliverToBoxAdapter(child: _buildSearch()),
 
-              if (_query.isEmpty && widget.announcements.isNotEmpty)
-                SliverToBoxAdapter(child: _buildAnnouncementTicker()),
+                if (_query.isEmpty && widget.announcements.isNotEmpty)
+                  SliverToBoxAdapter(child: _buildAnnouncementTicker()),
 
-              // 3. Real Flash Sale Section (If active in database and within time window)
-              if (activeSale != null &&
-                  activeSale.items.isNotEmpty &&
-                  _isFlashSaleTimeActive &&
-                  _query.isEmpty)
-                SliverToBoxAdapter(child: _buildFlashSaleSection(activeSale)),
-
-              // 5. Combo Carousel Banner (Real from DB)
-              if (_query.isEmpty && widget.combos.isNotEmpty)
-                SliverToBoxAdapter(
-                  child: HomeComboCarousel(
-                    combos: widget.combos,
-                    onAddToCart: (combo) {
-                      final addCombo = widget.onAddComboToCart;
-                      if (addCombo != null) {
-                        addCombo(combo);
-                      } else {
-                        widget.onAddToCart(combo.name);
-                      }
-                    },
-                    onTapFood: _openFoodDetail,
-                  ),
-                ),
-
-              // 5. Store Commitments
-              if (_query.isEmpty && !widget.loading)
-                SliverToBoxAdapter(child: _buildCommitments()),
-
-              // 6. Best Sellers Section (🔥 Bán chạy - sorted from live DB)
-              if (_topBestSellers.isNotEmpty && _query.isEmpty) ...[
-                SliverToBoxAdapter(
-                  child: _buildSectionHeading(
-                    kicker: '🔥 BÁN CHẠY',
-                    title: 'Món ăn bán chạy nhất',
-                    action: 'Xem thêm',
-                    onAction: () {},
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _buildBestSellersStrip(_topBestSellers),
-                ),
-              ],
-
-              // Active Category Filter Bar (If filtered by Category from Left Drawer)
-              if (_selectedCategory != 'Tất cả' && _query.isEmpty)
-                SliverToBoxAdapter(
-                  child: _buildActiveCategoryFilterBanner(filtered.length),
-                ),
-
-              // 7. Food Catalog
-              if (widget.loading)
-                const SliverToBoxAdapter(child: HomeScreenSkeleton())
-              else if (widget.loadError != null)
-                SliverToBoxAdapter(child: _buildLoadError())
-              else if (filtered.isEmpty)
-                SliverToBoxAdapter(child: _buildEmptyState())
-              else if (showGroupedCatalog)
-                SliverToBoxAdapter(child: _buildCategoryFoodSections())
-              else ...[
-                SliverToBoxAdapter(
-                  child: _buildSectionHeading(
-                    kicker: 'THỰC ĐƠN',
-                    title: _selectedCategory == 'Tất cả'
-                        ? 'Kết quả tìm kiếm'
-                        : _selectedCategory,
-                    action: _selectedCategory != 'Tất cả'
-                        ? '✕ Bỏ lọc'
-                        : '${filtered.length} món',
-                    onAction: () {
-                      if (_selectedCategory != 'Tất cả') {
-                        setState(() => _selectedCategory = 'Tất cả');
-                      }
-                    },
-                  ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                  sliver: SliverGrid(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) => _buildFoodCard(filtered[index]),
-                      childCount: filtered.length,
+                // 3. Real Flash Sale Section (If active in database and within time window)
+                if (activeSale != null &&
+                    activeSale.items.isNotEmpty &&
+                    _isFlashSaleTimeActive &&
+                    _query.isEmpty)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 18,
+                      child: _buildFlashSaleSection(activeSale),
                     ),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 14,
-                          crossAxisSpacing: 14,
-                          childAspectRatio: 0.65,
-                        ),
                   ),
-                ),
+
+                // 5. Combo Carousel Banner (Real from DB)
+                if (_query.isEmpty && widget.combos.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      delay: const Duration(milliseconds: 60),
+                      offsetY: 18,
+                      child: HomeComboCarousel(
+                        combos: widget.combos,
+                        onAddToCart: (combo) {
+                          final addCombo = widget.onAddComboToCart;
+                          if (addCombo != null) {
+                            addCombo(combo);
+                          } else {
+                            widget.onAddToCart(combo.name);
+                          }
+                        },
+                        onTapFood: _openFoodDetail,
+                      ),
+                    ),
+                  ),
+
+                // 5. Store Commitments
+                if (_query.isEmpty && !widget.loading)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 16,
+                      child: _buildCommitments(),
+                    ),
+                  ),
+
+                // 6. Best Sellers Section (🔥 Bán chạy - sorted from live DB)
+                if (_topBestSellers.isNotEmpty && _query.isEmpty)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 20,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildSectionHeading(
+                            kicker: '🔥 BÁN CHẠY',
+                            title: 'Món ăn bán chạy nhất',
+                            action: 'Xem thêm',
+                            onAction: () {},
+                          ),
+                          _buildBestSellersStrip(_topBestSellers),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // Active Category Filter Bar (If filtered by Category from Left Drawer)
+                if (_selectedCategory != 'Tất cả' && _query.isEmpty)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 14,
+                      child: _buildActiveCategoryFilterBanner(filtered.length),
+                    ),
+                  ),
+
+                // 7. Food Catalog
+                if (widget.loading)
+                  const SliverToBoxAdapter(child: HomeScreenSkeleton())
+                else if (widget.loadError != null)
+                  SliverToBoxAdapter(child: _buildLoadError())
+                else if (filtered.isEmpty)
+                  SliverToBoxAdapter(child: _buildEmptyState())
+                else if (showGroupedCatalog)
+                  SliverToBoxAdapter(child: _buildCategoryFoodSections())
+                else ...[
+                  SliverToBoxAdapter(
+                    child: _buildSectionHeading(
+                      kicker: 'THỰC ĐƠN',
+                      title: _selectedCategory == 'Tất cả'
+                          ? 'Kết quả tìm kiếm'
+                          : _selectedCategory,
+                      action: _selectedCategory != 'Tất cả'
+                          ? '✕ Bỏ lọc'
+                          : '${filtered.length} món',
+                      onAction: () {
+                        if (_selectedCategory != 'Tất cả') {
+                          setState(() => _selectedCategory = 'Tất cả');
+                        }
+                      },
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                    sliver: SliverGrid(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => _buildFoodCard(filtered[index]),
+                        childCount: filtered.length,
+                      ),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 14,
+                            crossAxisSpacing: 14,
+                            childAspectRatio: 0.65,
+                          ),
+                    ),
+                  ),
+                ],
+
+                // 8. Customer Reviews Section (Real from DB or fallback)
+                if (_query.isEmpty && !widget.loading)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 20,
+                      child: _buildReviewsSection(),
+                    ),
+                  ),
+
+                // 9. Store Footer
+                if (_query.isEmpty && !widget.loading)
+                  SliverToBoxAdapter(
+                    child: ScrollReveal(
+                      offsetY: 20,
+                      child: _buildFooterSection(),
+                    ),
+                  ),
               ],
-
-              // 8. Customer Reviews Section (Real from DB or fallback)
-              if (_query.isEmpty && !widget.loading)
-                SliverToBoxAdapter(child: _buildReviewsSection()),
-
-              // 9. Store Footer
-              if (_query.isEmpty && !widget.loading)
-                SliverToBoxAdapter(child: _buildFooterSection()),
-            ],
+            ),
           ),
         ),
       ),
@@ -2999,18 +3014,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     badgeCount: widget.cartCount,
                     onTap: () {
                       Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context)
-                        ..hideCurrentSnackBar()
-                        ..showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              widget.cartCount > 0
-                                  ? 'Giỏ hàng hiện có ${widget.cartCount} món ăn'
-                                  : 'Giỏ hàng hiện đang trống',
-                            ),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
+                      widget.onSelectTab?.call(2);
                     },
                   ),
 

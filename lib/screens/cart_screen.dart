@@ -7,6 +7,7 @@ import '../models/auth_session.dart';
 import '../models/cart_item.dart';
 import '../models/checkout_model.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../services/order_service.dart';
 import '../widgets/app_image.dart';
 
@@ -105,6 +106,7 @@ class _CartScreenState extends State<CartScreen>
 
   @override
   void dispose() {
+    _toastTimer?.cancel();
     _shippingQuoteDebounce?.cancel();
     _fadeCtrl.dispose();
     _nameController.dispose();
@@ -365,19 +367,15 @@ class _CartScreenState extends State<CartScreen>
     return '$formatted₫';
   }
 
+  Timer? _toastTimer;
+
   void _showToast(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: isError
-              ? const Color(0xFFD32F2F)
-              : const Color(0xFF2E7D32),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+    // Dùng system notification thay SnackBar
+    if (isError) {
+      NotificationService.instance.showError(message);
+    } else {
+      NotificationService.instance.showSuccess('Bếp 1979', message);
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -463,6 +461,8 @@ class _CartScreenState extends State<CartScreen>
       if (!mounted) return;
       setState(() => _isSubmittingOrder = false);
 
+      // Gửi system notification đặt hàng thành công
+      NotificationService.instance.showOrderPlaced(orderId?.toString() ?? '');
       _showOrderSuccessDialog(orderId);
     } catch (e) {
       if (!mounted) return;

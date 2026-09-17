@@ -4,6 +4,7 @@ import '../core/app_theme.dart';
 import '../models/flash_sale.dart';
 import '../models/food_item.dart';
 import '../models/home_content.dart';
+import '../services/notification_service.dart';
 import '../widgets/food_card.dart';
 import 'food_detail_screen.dart';
 
@@ -648,14 +649,10 @@ class _CategoryScreenState extends State<CategoryScreen> {
         actions: [
           IconButton(
             onPressed: () {
-              ScaffoldMessenger.of(context)
-                ..hideCurrentSnackBar()
-                ..showSnackBar(
-                  SnackBar(
-                    content: Text('Giỏ hàng có ${widget.cartCount} món'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+              NotificationService.instance.showInfo(
+                'Giỏ hàng',
+                'Giỏ hàng có ${widget.cartCount} món',
+              );
             },
             icon: Badge(
               label: Text('${widget.cartCount}'),

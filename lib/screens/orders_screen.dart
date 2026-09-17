@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../models/auth_session.dart';
 import '../models/order_item.dart';
+import '../services/notification_service.dart';
 import '../services/order_service.dart';
 import '../widgets/app_image.dart';
 
@@ -56,6 +57,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   @override
   void dispose() {
+    _toastTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -195,6 +197,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return '${chunks.join('.')}đ';
   }
 
+  Timer? _toastTimer;
+
+  void _showToast(String message, {Color? backgroundColor}) {
+    // Dùng system notification thay SnackBar
+    final isError =
+        backgroundColor == const Color(0xFFC62828) ||
+        backgroundColor == const Color(0xFFD32F2F);
+    if (isError) {
+      NotificationService.instance.showError(message);
+    } else {
+      NotificationService.instance.showSuccess('Bếp 1979', message);
+    }
+  }
+
   Future<void> _handleCancelOrder(OrderModel order) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -249,22 +265,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
     try {
       await _orderService.cancelOrder(widget.session!.token, order.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Đã hủy đơn hàng #DH${order.id} thành công!'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2E7D32),
-        ),
+      _showToast(
+        'Đã hủy đơn hàng #DH${order.id} thành công!',
+        backgroundColor: const Color(0xFF2E7D32),
       );
       _fetchOrdersFromServer(forceRefresh: true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFFC62828),
-        ),
+      _showToast(
+        e.toString().replaceFirst('Exception: ', ''),
+        backgroundColor: const Color(0xFFC62828),
       );
     }
   }
@@ -277,14 +287,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
         count++;
       }
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Đã thêm $count món từ đơn #DH${order.id} vào giỏ hàng! 🛒',
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.orange,
-      ),
+    _showToast(
+      'Đã thêm $count món từ đơn #DH${order.id} vào giỏ hàng! 🛒',
+      backgroundColor: AppColors.orange,
     );
   }
 

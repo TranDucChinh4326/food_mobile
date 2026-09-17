@@ -7,6 +7,7 @@ import '../core/app_theme.dart';
 import '../models/auth_session.dart';
 import '../services/api_exception.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
@@ -360,15 +361,10 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _showSocialNotice(String provider) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Đang kết nối cổng đăng nhập $provider...'),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+    NotificationService.instance.showInfo(
+      'Đăng nhập',
+      'Đang kết nối cổng đăng nhập $provider...',
+    );
   }
 
   void _showForgotPasswordDialog() {
@@ -414,11 +410,9 @@ class _AuthScreenState extends State<AuthScreen> {
           FilledButton(
             onPressed: () {
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Vui lòng kiểm tra email để đặt lại mật khẩu.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
+              NotificationService.instance.showSuccess(
+                'Bếp 1979',
+                'Vui lòng kiểm tra email để đặt lại mật khẩu.',
               );
             },
             style: FilledButton.styleFrom(

@@ -8,6 +8,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../core/app_theme.dart';
 import '../models/auth_session.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/app_image.dart';
 
 class AccountScreen extends StatefulWidget {
@@ -387,17 +388,11 @@ class _AccountScreenState extends State<AccountScreen>
   }
 
   void _showToast(String message, {bool isError = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Colors.red.shade700 : AppColors.ink,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+    if (isError) {
+      NotificationService.instance.showError(message);
+    } else {
+      NotificationService.instance.showSuccess('Bếp 1979', message);
+    }
   }
 
   // ==========================================
@@ -2960,12 +2955,7 @@ class _AccountScreenState extends State<AccountScreen>
                     const SizedBox(width: 12),
                     FilledButton(
                       onPressed: food.stockQuantity > 0
-                          ? () {
-                              widget.onAddToCart?.call(food.name);
-                              _showToast(
-                                'Đã thêm "${food.name}" vào giỏ hàng!',
-                              );
-                            }
+                          ? () => widget.onAddToCart?.call(food.name)
                           : null,
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.orange,

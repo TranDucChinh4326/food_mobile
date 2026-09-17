@@ -196,31 +196,6 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
     final finalNotes = _notesController.text.trim();
     widget.onAddToCart(widget.food.name, _quantity, finalNotes, _totalPrice);
     Navigator.of(context).pop();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(
-              Icons.check_circle_rounded,
-              color: Colors.white,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Đã thêm $_quantity phần "${widget.food.name}" vào giỏ hàng!',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: const Color(0xFF2E7D32),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   List<FoodItem> get _recommendedFoods {
@@ -1299,12 +1274,6 @@ class _FoodDetailScreenState extends State<FoodDetailScreen> {
                     InkWell(
                       onTap: () {
                         widget.onAddToCart(rec.name, 1, '', effectivePrice);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Đã thêm "${rec.name}" vào giỏ!'),
-                            duration: const Duration(seconds: 1),
-                          ),
-                        );
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(

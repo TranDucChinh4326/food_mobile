@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
@@ -12,6 +13,8 @@ import '../models/food_review_item.dart';
 import '../models/home_content.dart';
 import '../services/food_service.dart';
 import '../services/cart_storage_service.dart';
+import '../services/local_cache_service.dart';
+import '../services/notification_service.dart';
 import 'account_screen.dart';
 import 'cart_screen.dart';
 import 'home_screen.dart';
@@ -36,6 +39,14 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   int _ordersRefreshKey = 0;
+  final Set<int> _visitedTabs = {0};
+
+  void _selectTab(int index) {
+    setState(() {
+      _visitedTabs.add(index);
+      _selectedIndex = index;
+    });
+  }
 
   // ── Giỏ hàng ────────────────────────────────
   final List<CartItem> _cartItems = [];
@@ -62,9 +73,13 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    _hydrateFromCache();
+    unawaited(_hydrateFromCache());
     _restoreCart();
-    _loadAllData();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   Future<void> _restoreCart() async {
@@ -81,29 +96,42 @@ class _AppShellState extends State<AppShell> {
     unawaited(_cartStorage.save(widget.session.user.id, _cartItems));
   }
 
-  void _hydrateFromCache() {
-    final cachedFoods = _foodService.getCachedFoods();
-    final cachedCategories = _foodService.getCachedCategories();
-    final cachedCombos = _foodService.getCachedCombos();
-    final cachedFlashSales = _foodService.getCachedFlashSales();
-    final cachedReviews = _foodService.getCachedReviews();
-    final cachedAnnouncements = _foodService.getCachedAnnouncements();
-    final cachedAdvertisements = _foodService.getCachedAdvertisements();
+  Future<void> _hydrateFromCache() async {
+    final paths = [
+      LocalCacheService.dataCachePath,
+      LocalCacheService.imageCachePath,
+    ];
+    final cached = await compute(_readHomeCache, paths);
+    if (!mounted) return;
 
-    if (cachedFoods != null && cachedFoods.isNotEmpty) {
-      _foods = cachedFoods;
-      _loadingFoods = false;
-    }
-    if (cachedCategories != null && cachedCategories.isNotEmpty) {
-      _categories = cachedCategories;
-    }
-    if (cachedCombos != null && cachedCombos.isNotEmpty) {
-      _combos = cachedCombos;
-    }
-    if (cachedFlashSales != null) _flashSales = cachedFlashSales;
-    if (cachedReviews != null) _reviews = cachedReviews;
-    if (cachedAnnouncements != null) _announcements = cachedAnnouncements;
-    if (cachedAdvertisements != null) _advertisements = cachedAdvertisements;
+    final cachedFoods = cached[0] as List<FoodItem>?;
+    final cachedCategories = cached[1] as List<FoodCategory>?;
+    final cachedCombos = cached[2] as List<ComboItem>?;
+    final cachedFlashSales = cached[3] as List<FlashSaleCampaign>?;
+    final cachedReviews = cached[4] as List<FoodReviewItem>?;
+    final cachedAnnouncements = cached[5] as List<HomeAnnouncement>?;
+    final cachedAdvertisements = cached[6] as List<HomeAdvertisement>?;
+
+    setState(() {
+      if (cachedFoods != null && cachedFoods.isNotEmpty) {
+        _foods = cachedFoods;
+        _loadingFoods = false;
+      }
+      if (cachedCategories != null && cachedCategories.isNotEmpty) {
+        _categories = cachedCategories;
+      }
+      if (cachedCombos != null && cachedCombos.isNotEmpty) {
+        _combos = cachedCombos;
+      }
+      if (cachedFlashSales != null) _flashSales = cachedFlashSales;
+      if (cachedReviews != null) _reviews = cachedReviews;
+      if (cachedAnnouncements != null) _announcements = cachedAnnouncements;
+      if (cachedAdvertisements != null) {
+        _advertisements = cachedAdvertisements;
+      }
+    });
+
+    await _loadAllData();
   }
 
   Future<void> _loadAllData({bool forceRefresh = false}) async {
@@ -114,18 +142,15 @@ class _AppShellState extends State<AppShell> {
       });
     }
     try {
-      final results = await Future.wait([
-        _foodService.fetchFoods(forceRefresh: forceRefresh),
-        _foodService.fetchFlashSales(forceRefresh: forceRefresh),
-        _foodService.fetchCombos(forceRefresh: forceRefresh),
-        _foodService.fetchReviews(forceRefresh: forceRefresh),
-        _foodService.fetchCategories(forceRefresh: forceRefresh),
-        _foodService.fetchAnnouncements(
-          widget.session.token,
-          forceRefresh: forceRefresh,
-        ),
-        _foodService.fetchAdvertisements(forceRefresh: forceRefresh),
-        _foodService.fetchAvailableVoucherCount(widget.session.token),
+      final token = widget.session.token;
+      final paths = [
+        LocalCacheService.dataCachePath,
+        LocalCacheService.imageCachePath,
+      ];
+      final results = await compute(_fetchHomeData, <Object>[
+        token,
+        forceRefresh,
+        ...paths,
       ]);
       if (mounted) {
         setState(() {
@@ -223,19 +248,8 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _showAddedToCartMessage(String foodName) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Đã thêm $foodName vào giỏ hàng 🛒'),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          action: SnackBarAction(
-            label: 'XEM GIỎ',
-            onPressed: () => setState(() => _selectedIndex = 2),
-          ),
-        ),
-      );
+    // Gửi system notification thay SnackBar
+    NotificationService.instance.showAddedToCart(foodName);
   }
 
   void _updateCartQuantity(int foodId, int newQty) {
@@ -316,49 +330,58 @@ class _AppShellState extends State<AppShell> {
         onToggleFavorite: _toggleFavorite,
         onMarkAnnouncementsRead: _markAnnouncementsRead,
         session: widget.session,
-        onSelectTab: (index) => setState(() => _selectedIndex = index),
+        onSelectTab: _selectTab,
       ),
 
       // 1 — Đơn hàng
-      OrdersScreen(
-        session: widget.session,
-        refreshKey: _ordersRefreshKey,
-        onGoToMenu: () => setState(() => _selectedIndex = 0),
-        onAddToCart: (name) => _addToCart(name),
-      ),
+      if (_visitedTabs.contains(1))
+        OrdersScreen(
+          session: widget.session,
+          refreshKey: _ordersRefreshKey,
+          onGoToMenu: () => _selectTab(0),
+          onAddToCart: (name) => _addToCart(name),
+        )
+      else
+        const SizedBox.shrink(),
 
       // 2 — Giỏ hàng (tính phí ship, voucher, giao hàng COD)
-      CartScreen(
-        items: _cartItems,
-        session: widget.session,
-        onUpdateQuantity: _updateCartQuantity,
-        onRemoveItem: _removeCartItem,
-        onClearCart: _clearCart,
-        onGoToMenu: () => setState(() => _selectedIndex = 0),
-        onOrderSuccess: () {
-          _clearCart();
-          setState(() {
-            _ordersRefreshKey++;
-            _selectedIndex = 1;
-          });
-        },
-      ),
+      if (_visitedTabs.contains(2))
+        CartScreen(
+          items: _cartItems,
+          session: widget.session,
+          onUpdateQuantity: _updateCartQuantity,
+          onRemoveItem: _removeCartItem,
+          onClearCart: _clearCart,
+          onGoToMenu: () => _selectTab(0),
+          onOrderSuccess: () {
+            _clearCart();
+            setState(() {
+              _ordersRefreshKey++;
+              _visitedTabs.add(1);
+              _selectedIndex = 1;
+            });
+          },
+        )
+      else
+        const SizedBox.shrink(),
 
       // 3 — Tài khoản
-      AccountScreen(
-        session: widget.session,
-        onLogout: widget.onLogout,
-        onSessionUpdated: widget.onSessionUpdated,
-        onAddToCart: (name) => _addToCart(name),
-      ),
+      if (_visitedTabs.contains(3))
+        AccountScreen(
+          session: widget.session,
+          onLogout: widget.onLogout,
+          onSessionUpdated: widget.onSessionUpdated,
+          onAddToCart: (name) => _addToCart(name),
+        )
+      else
+        const SizedBox.shrink(),
     ];
 
     return Scaffold(
       body: IndexedStack(index: _selectedIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
+        onDestinationSelected: _selectTab,
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.home_outlined),
@@ -397,4 +420,38 @@ class _AppShellState extends State<AppShell> {
       ),
     );
   }
+}
+
+List<Object?> _readHomeCache(List<String> paths) {
+  LocalCacheService.initializeFromPaths(paths[0], paths[1]);
+  final service = FoodService();
+  return [
+    service.getCachedFoods(),
+    service.getCachedCategories(),
+    service.getCachedCombos(),
+    service.getCachedFlashSales(),
+    service.getCachedReviews(),
+    service.getCachedAnnouncements(),
+    service.getCachedAdvertisements(),
+  ];
+}
+
+Future<List<Object>> _fetchHomeData(List<Object> arguments) async {
+  final token = arguments[0] as String;
+  final forceRefresh = arguments[1] as bool;
+  LocalCacheService.initializeFromPaths(
+    arguments[2] as String,
+    arguments[3] as String,
+  );
+  final service = FoodService();
+  return Future.wait<Object>([
+    service.fetchFoods(forceRefresh: forceRefresh),
+    service.fetchFlashSales(forceRefresh: forceRefresh),
+    service.fetchCombos(forceRefresh: forceRefresh),
+    service.fetchReviews(forceRefresh: forceRefresh),
+    service.fetchCategories(forceRefresh: forceRefresh),
+    service.fetchAnnouncements(token, forceRefresh: forceRefresh),
+    service.fetchAdvertisements(forceRefresh: forceRefresh),
+    service.fetchAvailableVoucherCount(token),
+  ]);
 }
